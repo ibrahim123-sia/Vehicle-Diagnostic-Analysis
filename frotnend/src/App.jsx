@@ -15,6 +15,9 @@ const VideoProblemDetector = () => {
   const videoPreviewRef = useRef(null);
   const timerRef = useRef(null);
 
+  // Use environment variable for API URL
+  const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnostic-analysis.vercel.app';
+
   // Start live recording
   const startRecording = async () => {
     try {
@@ -122,7 +125,8 @@ const VideoProblemDetector = () => {
     formData.append('recording', recordedBlob, `vehicle-recording-${Date.now()}.webm`);
 
     try {
-      const response = await axios.post('http://localhost:5000/process-recording', formData, {
+      // Use the environment variable for API URL
+      const response = await axios.post(`${API_BASE_URL}/process-recording`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -352,20 +356,6 @@ const VideoProblemDetector = () => {
 
                 {/* Problem Overview */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                  {/* <div className={`p-4 rounded-lg border-2 ${getSeverityColor(analysis.severity)}`}>
-                    <div className="flex items-center mb-3">
-                      {getProblemIcon(analysis.problemType)}
-                      <div className="ml-3">
-                        <h3 className="text-sm font-medium text-gray-600">Problem Type</h3>
-                        <p className="text-lg font-semibold capitalize">{analysis.problemType}</p>
-                      </div>
-                    </div>
-                    <div className="text-sm">
-                      <span className="font-medium">Severity:</span> 
-                      <span className="capitalize ml-1">{analysis.severity}</span>
-                    </div>
-                  </div> */}
-
                   <div className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
                     <h3 className="text-sm font-medium text-gray-600 mb-2">Primary Issue</h3>
                     <p className="text-gray-700">{analysis.mainProblem}</p>
