@@ -12,7 +12,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Initialize APIs
 const assemblyClient = new AssemblyAI({
   apiKey: process.env.ASSEMBLYAI_API_KEY || "c365a3cefbee47d2a8f1ea25ed797d35",
 });
@@ -21,52 +20,114 @@ const genAI = new GoogleGenerativeAI(
   process.env.GEMINI_API_KEY || "AIzaSyAG08T5-jfcrWSIprRxOp1f-tTlY_ocAeo"
 );
 
-// File upload for recordings only
+const storage = multer.memoryStorage();
 const upload = multer({
-  dest: "uploads/",
+  storage: storage,
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100MB limit for recordings
+    fileSize: 100 * 1024 * 1024,
   }
 });
 
-// Create folders
-["uploads", "output", "recordings"].forEach((dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+function ensureDirectories() {
+  if (process.env.NODE_ENV === 'production') {
+    const tmpDirs = ['/tmp/uploads', '/tmp/output', '/tmp/recordings'];
+    tmpDirs.forEach(dir => {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    });
+    return '/tmp';
+  } else {
+    const localDirs = ["uploads", "output", "recordings"];
+    localDirs.forEach((dir) => {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    });
+    return '.';
   }
-});
+}
 
-// Keywords database for vehicle problems
+const baseDir = ensureDirectories();
+
 const vehicleKeywords = [
-  "brake problem", "brake issues", "braking system", "brake pads", "brake discs",
-  "tire problem", "flat tire", "tire pressure", "wheel alignment", "tire wear",
-  "engine problem", "engine noise", "overheating", "engine failure", "check engine",
-  "transmission problem", "gear issues", "clutch problem", "shifting problem",
-  "electrical problem", "battery issue", "alternator", "starter motor", "wiring",
-  "suspension problem", "shocks", "struts", "alignment issue", "steering problem",
-  "oil problem", "oil leak", "oil pressure", "engine oil", "lubrication",
-  "cooling system", "radiator", "thermostat", "coolant leak",
-  "exhaust system", "muffler", "catalytic converter", "exhaust leak",
-  "fuel system", "fuel pump", "fuel injector", "fuel filter",
-  "air conditioning", "ac problem", "heating system", "blower motor",
-  "brake fluid", "power steering", "alignment", "vibration", "noise"
+  "brake pedal", "brake pads", "brake discs", "brake fluid", "brake lines",
+  "brake noise", "brake vibration", "brake failure", "brake warning",
+  "engine overheating", "engine noise", "engine failure", "engine stalling",
+  "engine misfire", "engine vibration", "engine smoking", "engine knocking",
+  "motor starter", "motor mount",
+  "battery dead", "battery drain", "alternator failure", "starter motor",
+  "electrical short", "fuse blown", "wiring issue", "light failure",
+  "flat tire", "tire pressure", "tire wear", "wheel alignment", "wheel bearing",
+  "rim damage", "tire vibration",
+  "suspension noise", "suspension failure", "shock absorbers", "strut failure", 
+  "spring broken", "control arm", "ball joint", "bushing worn",
+  "steering wheel", "power steering", "steering vibration", "alignment issue",
+  "car pulling", "uneven ride", "body roll",
+  "transmission slipping", "gear shifting", "clutch problem", "transmission fluid",
+  "gear noise", "shifting difficulty",
+  "coolant leak", "overheating issue", "radiator problem", "thermostat failure",
+  "water pump", "cooling fan",
+  "exhaust leak", "muffler problem", "catalytic converter", "exhaust noise",
+  "fuel pump", "fuel injector", "fuel filter", "fuel leak",
+  "side mirror", "windshield crack", "door lock", "window regulator",
+  "seat belt", "air conditioning", "heater problem",
+  "oil leak", "power loss", "check engine", "warning light", "emission problem"
 ];
 
-// Function to search keywords in text
-function searchKeywords(text) {
-  const foundKeywords = [];
+function advancedKeywordSearch(text) {
   const lowerText = text.toLowerCase();
+  const foundKeywords = [];
+  const keywordCategories = {};
   
   vehicleKeywords.forEach(keyword => {
-    if (lowerText.includes(keyword.toLowerCase())) {
+    const lowerKeyword = keyword.toLowerCase();
+    const wordRegex = new RegExp(`\\b${lowerKeyword}\\b`, 'gi');
+    const exactMatches = lowerText.match(wordRegex);
+    const partialMatch = lowerText.includes(lowerKeyword);
+    
+    if ((exactMatches && exactMatches.length > 0) || partialMatch) {
       foundKeywords.push(keyword);
+      
+      if (lowerKeyword.includes('brake')) {
+        keywordCategories.brake = true;
+      }
+      if (lowerKeyword.includes('tire') || lowerKeyword.includes('wheel')) {
+        keywordCategories.tire = true;
+      }
+      if (lowerKeyword.includes('engine') || lowerKeyword.includes('motor')) {
+        keywordCategories.engine = true;
+      }
+      if (lowerKeyword.includes('electrical') || lowerKeyword.includes('battery') || lowerKeyword.includes('light')) {
+        keywordCategories.electrical = true;
+      }
+      if (lowerKeyword.includes('transmission') || lowerKeyword.includes('gear') || lowerKeyword.includes('clutch')) {
+        keywordCategories.transmission = true;
+      }
     }
   });
   
-  return foundKeywords;
+  return {
+    foundKeywords: [...new Set(foundKeywords)],
+    categories: Object.keys(keywordCategories),
+    totalMatches: foundKeywords.length
+  };
 }
 
-// Transcribe with AssemblyAI
+function getTempFilePath(filename) {
+  return path.join(baseDir, 'uploads', filename);
+}
+
+function getOutputFilePath(filename) {
+  return path.join(baseDir, 'output', filename);
+}
+
+function saveBufferToTempFile(buffer, filename) {
+  const tempPath = getTempFilePath(filename);
+  fs.writeFileSync(tempPath, buffer);
+  return tempPath;
+}
+
 async function transcribeAudio(audioPath) {
   try {
     const audioUrl = await assemblyClient.files.upload(audioPath);
@@ -80,22 +141,17 @@ async function transcribeAudio(audioPath) {
       language: transcript.language_code,
     };
   } catch (error) {
-    console.error("AssemblyAI error:", error.message);
     return { success: false, error: error.message };
   }
 }
 
-// Improved Gemini response parsing
 function parseGeminiResponse(responseText) {
   try {
-    // Remove markdown code blocks if present
     let cleanText = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     
-    // Try to parse directly first
     try {
       return JSON.parse(cleanText);
     } catch (directError) {
-      // If direct parse fails, try to extract JSON object
       const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         return JSON.parse(jsonMatch[0]);
@@ -104,8 +160,6 @@ function parseGeminiResponse(responseText) {
       }
     }
   } catch (error) {
-    console.error("Failed to parse Gemini response:", error.message);
-    console.error("Original response:", responseText);
     throw new Error(`Failed to parse AI response: ${error.message}`);
   }
 }
@@ -138,9 +192,6 @@ Focus on vehicle mechanical issues. Return ONLY the JSON object without any addi
     const response = await result.response;
     const responseText = response.text();
 
-    console.log("Gemini raw response:", responseText);
-
-    // Parse the response
     const analysis = parseGeminiResponse(responseText);
 
     return {
@@ -148,54 +199,35 @@ Focus on vehicle mechanical issues. Return ONLY the JSON object without any addi
       ...analysis,
     };
   } catch (error) {
-    console.error("AI analysis failed:", error.message);
     throw new Error(`AI analysis failed: ${error.message}`);
   }
 }
 
-// Endpoint for live recording processing
 app.post("/process-recording", upload.single("recording"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No recording received" });
     }
 
-    const inputVideo = req.file.path;
+    const inputFileName = `input-${Date.now()}.webm`;
+    const inputVideo = saveBufferToTempFile(req.file.buffer, inputFileName);
     const outputFileName = `recording-${Date.now()}.mp3`;
-    const outputAudio = path.join("output", outputFileName);
-
-    console.log("Processing live recording...");
+    const outputAudio = getOutputFilePath(outputFileName);
 
     ffmpeg(inputVideo)
       .output(outputAudio)
       .audioCodec("libmp3lame")
-      .on("start", () => {
-        console.log("Converting video to audio...");
-      })
       .on("end", async () => {
         try {
-          console.log("Conversion complete, starting transcription...");
-
-          // Step 1: Transcribe with AssemblyAI
           const transcription = await transcribeAudio(outputAudio);
 
           if (!transcription.success) {
             throw new Error(`Transcription failed: ${transcription.error}`);
           }
 
-          console.log("Transcription complete, searching keywords...");
-
-          // Step 2: Search for keywords
-          const foundKeywords = searchKeywords(transcription.text);
-
-          console.log("Keyword search complete, starting AI analysis...");
-
-          // Step 3: Analyze with Gemini
+          const keywordResults = advancedKeywordSearch(transcription.text);
           const analysis = await analyzeWithGemini(transcription.text);
 
-          console.log("AI analysis complete");
-
-          // Response
           const response = {
             success: true,
             message: "Live Recording Analysis Completed!",
@@ -211,18 +243,18 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
               word_count: transcription.text.split(/\s+/).length,
               problem_count: analysis.specificIssues.length,
               aiModel: "gemini-2.0-flash",
-              // Add keyword search results
               keywordSearch: {
-                foundKeywords: foundKeywords,
-                totalKeywordsFound: foundKeywords.length,
-                keywordMatch: foundKeywords.length > 0
+                foundKeywords: keywordResults.foundKeywords,
+                categories: keywordResults.categories,
+                totalKeywordsFound: keywordResults.totalMatches,
+                keywordMatch: keywordResults.totalMatches > 0,
+                totalMatches: keywordResults.totalMatches
               }
             },
           };
 
           res.json(response);
         } catch (error) {
-          console.error("Recording analysis error:", error.message);
           res.status(500).json({
             success: false,
             message: "Recording Analysis Failed",
@@ -230,27 +262,33 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
           });
         }
 
-        // Clean up input file
         setTimeout(() => {
-          fs.unlink(inputVideo, () => {
-            console.log("Cleaned up temporary files");
-          });
+          try {
+            if (fs.existsSync(inputVideo)) {
+              fs.unlinkSync(inputVideo);
+            }
+            if (fs.existsSync(outputAudio)) {
+              fs.unlinkSync(outputAudio);
+            }
+          } catch (cleanupError) {}
         }, 5000);
       })
       .on("error", (err) => {
-        console.error("Conversion error:", err);
+        try {
+          if (fs.existsSync(inputVideo)) {
+            fs.unlinkSync(inputVideo);
+          }
+        } catch (cleanupError) {}
         res.status(500).json({ error: "Conversion failed" });
       })
       .run();
   } catch (error) {
-    console.error("Server error:", error);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Download endpoint
 app.get("/download/:filename", (req, res) => {
-  const filePath = path.join("output", req.params.filename);
+  const filePath = getOutputFilePath(req.params.filename);
   if (fs.existsSync(filePath)) {
     res.download(filePath);
   } else {
@@ -258,17 +296,21 @@ app.get("/download/:filename", (req, res) => {
   }
 });
 
-// Health check endpoint
 app.get("/", (req, res) => {
   res.json({
     message: "Vehicle Problem Detector - Live Recording Only",
     status: "Ready for live video recording analysis",
-    features: ["Live recording", "Keyword search", "AI analysis"]
+    features: ["Live recording", "Keyword search", "AI analysis"],
+    totalKeywords: vehicleKeywords.length,
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Vehicle Problem Detector running on port ${PORT}`);
-  console.log(`Mobile-friendly live recording interface ready`);
-});
+module.exports = app;
+
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`Vehicle Problem Detector running on port ${PORT}`);
+  });
+}
