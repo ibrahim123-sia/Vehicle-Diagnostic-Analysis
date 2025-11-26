@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
-const ffmpeg = require("fluent-ffmpeg");
 const fs = require("fs");
 const path = require("path");
 const { AssemblyAI } = require("assemblyai");
@@ -27,28 +26,6 @@ const upload = multer({
     fileSize: 100 * 1024 * 1024,
   }
 });
-
-function ensureDirectories() {
-  if (process.env.NODE_ENV === 'production') {
-    const tmpDirs = ['/tmp/uploads', '/tmp/output', '/tmp/recordings'];
-    tmpDirs.forEach(dir => {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-    });
-    return '/tmp';
-  } else {
-    const localDirs = ["uploads", "output", "recordings"];
-    localDirs.forEach((dir) => {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-    });
-    return '.';
-  }
-}
-
-const baseDir = ensureDirectories();
 
 const vehicleKeywords = [
   "brake pedal", "brake pads", "brake discs", "brake fluid", "brake lines",
@@ -114,37 +91,6 @@ function advancedKeywordSearch(text) {
   };
 }
 
-function getTempFilePath(filename) {
-  return path.join(baseDir, 'uploads', filename);
-}
-
-function getOutputFilePath(filename) {
-  return path.join(baseDir, 'output', filename);
-}
-
-function saveBufferToTempFile(buffer, filename) {
-  const tempPath = getTempFilePath(filename);
-  fs.writeFileSync(tempPath, buffer);
-  return tempPath;
-}
-
-async function transcribeAudio(audioPath) {
-  try {
-    const audioUrl = await assemblyClient.files.upload(audioPath);
-    const transcript = await assemblyClient.transcripts.transcribe({
-      audio: audioUrl,
-    });
-
-    return {
-      success: true,
-      text: transcript.text,
-      language: transcript.language_code,
-    };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
 function parseGeminiResponse(responseText) {
   try {
     let cleanText = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
@@ -203,99 +149,113 @@ Focus on vehicle mechanical issues. Return ONLY the JSON object without any addi
   }
 }
 
+// Add transcribeAudio function
+async function transcribeAudio(audioPath) {
+  try {
+    const audioUrl = await assemblyClient.files.upload(audioPath);
+    const transcript = await assemblyClient.transcripts.transcribe({
+      audio: audioUrl,
+    });
+
+    return {
+      success: true,
+      text: transcript.text,
+      language: transcript.language_code,
+    };
+  } catch (error) {
+    console.error("AssemblyAI error:", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// Test endpoint
+app.post("/test", upload.single("recording"), (req, res) => {
+  res.json({ 
+    success: true, 
+    message: "File received successfully",
+    fileSize: req.file?.size 
+  });
+});
+
+// Main processing endpoint
 app.post("/process-recording", upload.single("recording"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No recording received" });
     }
 
-    const inputFileName = `input-${Date.now()}.webm`;
-    const inputVideo = saveBufferToTempFile(req.file.buffer, inputFileName);
-    const outputFileName = `recording-${Date.now()}.mp3`;
-    const outputAudio = getOutputFilePath(outputFileName);
+    console.log("Processing recording... File size:", req.file.size);
 
-    ffmpeg(inputVideo)
-      .output(outputAudio)
-      .audioCodec("libmp3lame")
-      .on("end", async () => {
-        try {
-          const transcription = await transcribeAudio(outputAudio);
+    // Create a temporary file in /tmp directory
+    const tempFilePath = `/tmp/audio-${Date.now()}.webm`;
+    fs.writeFileSync(tempFilePath, req.file.buffer);
 
-          if (!transcription.success) {
-            throw new Error(`Transcription failed: ${transcription.error}`);
+    try {
+      // Step 1: Transcribe with AssemblyAI
+      console.log("Starting transcription...");
+      const transcription = await transcribeAudio(tempFilePath);
+
+      if (!transcription.success) {
+        throw new Error(`Transcription failed: ${transcription.error}`);
+      }
+
+      console.log("Transcription successful, length:", transcription.text.length);
+
+      // Step 2: Search for keywords
+      const keywordResults = advancedKeywordSearch(transcription.text);
+      console.log("Keyword search found:", keywordResults.totalMatches, "matches");
+
+      // Step 3: Analyze with Gemini
+      console.log("Starting AI analysis...");
+      const analysis = await analyzeWithGemini(transcription.text);
+      console.log("AI analysis completed");
+
+      const response = {
+        success: true,
+        message: "Live Recording Analysis Completed!",
+        analysis: {
+          transcription: transcription.text,
+          mainProblem: analysis.mainProblem,
+          problemType: analysis.problemType,
+          specificIssues: analysis.specificIssues,
+          severity: analysis.severity,
+          keywords: analysis.keywords,
+          recommendation: analysis.recommendation,
+          word_count: transcription.text.split(/\s+/).length,
+          problem_count: analysis.specificIssues.length,
+          aiModel: "gemini-2.0-flash",
+          keywordSearch: {
+            foundKeywords: keywordResults.foundKeywords,
+            categories: keywordResults.categories,
+            totalKeywordsFound: keywordResults.totalMatches,
+            keywordMatch: keywordResults.totalMatches > 0,
+            totalMatches: keywordResults.totalMatches
           }
+        },
+      };
 
-          const keywordResults = advancedKeywordSearch(transcription.text);
-          const analysis = await analyzeWithGemini(transcription.text);
-
-          const response = {
-            success: true,
-            message: "Live Recording Analysis Completed!",
-            downloadUrl: `/download/${outputFileName}`,
-            analysis: {
-              transcription: transcription.text,
-              mainProblem: analysis.mainProblem,
-              problemType: analysis.problemType,
-              specificIssues: analysis.specificIssues,
-              severity: analysis.severity,
-              keywords: analysis.keywords,
-              recommendation: analysis.recommendation,
-              word_count: transcription.text.split(/\s+/).length,
-              problem_count: analysis.specificIssues.length,
-              aiModel: "gemini-2.0-flash",
-              keywordSearch: {
-                foundKeywords: keywordResults.foundKeywords,
-                categories: keywordResults.categories,
-                totalKeywordsFound: keywordResults.totalMatches,
-                keywordMatch: keywordResults.totalMatches > 0,
-                totalMatches: keywordResults.totalMatches
-              }
-            },
-          };
-
-          res.json(response);
-        } catch (error) {
-          res.status(500).json({
-            success: false,
-            message: "Recording Analysis Failed",
-            error: error.message,
-          });
+      res.json(response);
+    } finally {
+      // Clean up temporary file
+      try {
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
         }
+      } catch (cleanupError) {
+        console.error("Cleanup error:", cleanupError.message);
+      }
+    }
 
-        setTimeout(() => {
-          try {
-            if (fs.existsSync(inputVideo)) {
-              fs.unlinkSync(inputVideo);
-            }
-            if (fs.existsSync(outputAudio)) {
-              fs.unlinkSync(outputAudio);
-            }
-          } catch (cleanupError) {}
-        }, 5000);
-      })
-      .on("error", (err) => {
-        try {
-          if (fs.existsSync(inputVideo)) {
-            fs.unlinkSync(inputVideo);
-          }
-        } catch (cleanupError) {}
-        res.status(500).json({ error: "Conversion failed" });
-      })
-      .run();
   } catch (error) {
-    res.status(500).json({ error: "Server error" });
+    console.error("Server error:", error);
+    res.status(500).json({ 
+      error: "Server error",
+      message: error.message 
+    });
   }
 });
 
-app.get("/download/:filename", (req, res) => {
-  const filePath = getOutputFilePath(req.params.filename);
-  if (fs.existsSync(filePath)) {
-    res.download(filePath);
-  } else {
-    res.status(404).json({ error: "File not found" });
-  }
-});
-
+// Health check endpoint
 app.get("/", (req, res) => {
   res.json({
     message: "Vehicle Problem Detector - Live Recording Only",
@@ -306,11 +266,14 @@ app.get("/", (req, res) => {
   });
 });
 
+// For Vercel serverless compatibility
 module.exports = app;
 
+// Only start server if not in Vercel environment
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
     console.log(`Vehicle Problem Detector running on port ${PORT}`);
+    console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
   });
 }
