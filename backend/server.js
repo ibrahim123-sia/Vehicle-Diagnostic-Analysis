@@ -1,4 +1,4 @@
- const express = require("express");
+const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
@@ -275,4 +275,5 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`Vehicle Problem Detector running on port ${PORT}`);
     console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
-  })}
+  });
+}
