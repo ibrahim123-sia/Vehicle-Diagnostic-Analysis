@@ -186,12 +186,8 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
 
     console.log("Processing recording... File size:", req.file.size);
 
-    // Create a temporary file
-    const tempDir = path.join(__dirname, 'temp');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    
+    // For Vercel, use /tmp directory
+    const tempDir = '/tmp';
     const tempFilePath = path.join(tempDir, `audio-${Date.now()}.webm`);
     fs.writeFileSync(tempFilePath, req.file.buffer);
 
@@ -271,10 +267,15 @@ app.get("/", (req, res) => {
   });
 });
 
-// Start server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Vehicle Problem Detector running on port ${PORT}`);
-  console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+// For Vercel serverless compatibility
+module.exports = app;
+
+// Only start server if not in Vercel environment
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`Vehicle Problem Detector running on port ${PORT}`);
+    console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
