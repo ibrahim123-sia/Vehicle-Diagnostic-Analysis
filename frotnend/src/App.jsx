@@ -14,6 +14,7 @@ const VideoProblemDetector = () => {
   const streamRef = useRef(null);
   const videoPreviewRef = useRef(null);
   const timerRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Use environment variable for API URL
   const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnostic-analysis.vercel.app';
@@ -103,6 +104,44 @@ const VideoProblemDetector = () => {
     }
   };
 
+  // Handle manual file upload
+  const handleFileUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Check if file is a video
+    if (!file.type.startsWith('video/')) {
+      setMessage('Please upload a video file');
+      return;
+    }
+
+    // Check file size (max 100MB)
+    if (file.size > 100 * 1024 * 1024) {
+      setMessage('File size too large. Please upload a video smaller than 100MB.');
+      return;
+    }
+
+    setMessage('Video file selected. Ready for analysis.');
+    setRecordedBlob(file);
+    setAnalysis(null);
+
+    // Create preview URL for uploaded video
+    const videoURL = URL.createObjectURL(file);
+    if (videoPreviewRef.current) {
+      videoPreviewRef.current.srcObject = null;
+      videoPreviewRef.current.src = videoURL;
+      videoPreviewRef.current.controls = true;
+    }
+
+    // Reset file input
+    event.target.value = '';
+  };
+
+  // Trigger file input click
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
   // Format time for display
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -110,10 +149,10 @@ const VideoProblemDetector = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Process recorded video
+  // Process recorded video or uploaded file
   const processRecording = async () => {
     if (!recordedBlob) {
-      setMessage('Please record a video first');
+      setMessage('Please record a video or upload a file first');
       return;
     }
 
@@ -122,10 +161,15 @@ const VideoProblemDetector = () => {
     setAnalysis(null);
 
     const formData = new FormData();
-    formData.append('recording', recordedBlob, `vehicle-recording-${Date.now()}.webm`);
+    
+    // Check if recordedBlob is a File object or Blob
+    if (recordedBlob instanceof File) {
+      formData.append('recording', recordedBlob);
+    } else {
+      formData.append('recording', recordedBlob, `vehicle-recording-${Date.now()}.webm`);
+    }
 
     try {
-      // Use the environment variable for API URL
       const response = await axios.post(`${API_BASE_URL}/process-recording`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -133,13 +177,24 @@ const VideoProblemDetector = () => {
         timeout: 30000,
       });
 
-      setMessage('Analysis complete');
-      setAnalysis(response.data.analysis);
+      if (response.data.success) {
+        setMessage('Analysis complete');
+        setAnalysis(response.data.analysis);
+      } else {
+        throw new Error(response.data.message || 'Analysis failed');
+      }
       
     } catch (error) {
-      const errorMsg = error.response?.data?.error || error.message;
-      setMessage(`Analysis failed: ${errorMsg}`);
       console.error('Analysis Error:', error);
+      let errorMsg = 'Analysis failed. Please try again.';
+      
+      if (error.response?.data) {
+        errorMsg = error.response.data.message || error.response.data.error || errorMsg;
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+      
+      setMessage(`Analysis failed: ${errorMsg}`);
     } finally {
       setIsProcessing(false);
     }
@@ -151,6 +206,13 @@ const VideoProblemDetector = () => {
     setAnalysis(null);
     setMessage('');
     setRecordingTime(0);
+    
+    // Clear video preview
+    if (videoPreviewRef.current) {
+      videoPreviewRef.current.srcObject = null;
+      videoPreviewRef.current.src = '';
+      videoPreviewRef.current.controls = false;
+    }
   };
 
   // Severity color coding
@@ -190,17 +252,26 @@ const VideoProblemDetector = () => {
             Vehicle Diagnostic Analysis
           </h1>
           <p className="text-gray-600">
-            Record vehicle issues for AI-powered diagnostic analysis
+            Record or upload vehicle issue videos for AI-powered diagnostic analysis
           </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          {/* Recording Section */}
+          {/* Recording/Upload Section */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-4">
-              Video Recording
+              Video Input
             </h2>
+
+            {/* Hidden file input */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept="video/*"
+              className="hidden"
+            />
 
             {/* Video Preview */}
             <div className="mb-4 rounded-lg overflow-hidden bg-gray-900 aspect-video">
@@ -209,6 +280,7 @@ const VideoProblemDetector = () => {
                 autoPlay
                 muted
                 playsInline
+                controls={!!recordedBlob && !isRecording}
                 className="w-full h-full object-cover"
               />
               {!isRecording && !recordedBlob && (
@@ -235,34 +307,46 @@ const VideoProblemDetector = () => {
               </div>
             )}
 
-            {/* Recording Controls */}
+            {/* Recording/Upload Controls */}
             <div className="space-y-3">
               {!recordedBlob ? (
                 <>
-                  <button 
-                    onClick={isRecording ? stopRecording : startRecording}
-                    className={`w-full py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
-                      isRecording 
-                        ? 'bg-red-600 hover:bg-red-700' 
-                        : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
-                  >
-                    {isRecording ? (
-                      <span className="flex items-center justify-center">
-                        <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                          <rect x="6" y="6" width="12" height="12" rx="1"/>
-                        </svg>
-                        Stop Recording
-                      </span>
-                    ) : (
-                      <span className="flex items-center justify-center">
-                        <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                          <circle cx="12" cy="12" r="5" fill="currentColor"/>
-                        </svg>
-                        Start Recording
-                      </span>
-                    )}
-                  </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button 
+                      onClick={isRecording ? stopRecording : startRecording}
+                      className={`py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
+                        isRecording 
+                          ? 'bg-red-600 hover:bg-red-700' 
+                          : 'bg-blue-600 hover:bg-blue-700'
+                      }`}
+                    >
+                      {isRecording ? (
+                        <span className="flex items-center justify-center text-sm">
+                          <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                            <rect x="6" y="6" width="12" height="12" rx="1"/>
+                          </svg>
+                          Stop
+                        </span>
+                      ) : (
+                        <span className="flex items-center justify-center text-sm">
+                          <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="5" fill="currentColor"/>
+                          </svg>
+                          Record
+                        </span>
+                      )}
+                    </button>
+
+                    <button 
+                      onClick={triggerFileInput}
+                      className="py-3 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors flex items-center justify-center text-sm"
+                    >
+                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      Upload
+                    </button>
+                  </div>
 
                   {isRecording && (
                     <div className="text-center text-sm text-gray-600 bg-blue-50 p-3 rounded-lg border border-blue-100">
@@ -295,17 +379,25 @@ const VideoProblemDetector = () => {
                         <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        Analyze Recording
+                        Analyze Video
                       </span>
                     )}
                   </button>
 
-                  <button 
-                    onClick={startNewRecording}
-                    className="w-full py-2 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
-                  >
-                    New Recording
-                  </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button 
+                      onClick={startNewRecording}
+                      className="py-2 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
+                    >
+                      New Recording
+                    </button>
+                    <button 
+                      onClick={triggerFileInput}
+                      className="py-2 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
+                    >
+                      Upload Different
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -316,9 +408,9 @@ const VideoProblemDetector = () => {
             {/* Status Message */}
             {message && (
               <div className={`p-4 rounded-lg border ${
-                message.includes('failed') || message.includes('denied') || message.includes('Error')
+                message.includes('failed') || message.includes('denied') || message.includes('Error') || message.includes('Please upload')
                   ? 'bg-red-50 border-red-200 text-red-800' 
-                  : message.includes('Analyzing') || message.includes('Recording')
+                  : message.includes('Analyzing') || message.includes('Recording') || message.includes('selected')
                   ? 'bg-blue-50 border-blue-200 text-blue-800'
                   : 'bg-green-50 border-green-200 text-green-800'
               }`}>
@@ -359,6 +451,10 @@ const VideoProblemDetector = () => {
                   <div className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
                     <h3 className="text-sm font-medium text-gray-600 mb-2">Primary Issue</h3>
                     <p className="text-gray-700">{analysis.mainProblem}</p>
+                  </div>
+                  <div className={`p-4 rounded-lg border-2 ${getSeverityColor(analysis.severity)}`}>
+                    <h3 className="text-sm font-medium text-gray-600 mb-2">Severity Level</h3>
+                    <p className="font-semibold capitalize">{analysis.severity}</p>
                   </div>
                 </div>
 
@@ -416,7 +512,7 @@ const VideoProblemDetector = () => {
             {!analysis && (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">
-                  Recording Guidelines
+                  Video Guidelines
                 </h3>
                 <ul className="text-sm text-gray-600 space-y-3">
                   <li className="flex items-start">
@@ -441,7 +537,13 @@ const VideoProblemDetector = () => {
                     <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span>Optimal recording length: 30-120 seconds</span>
+                    <span>Optimal video length: 30-120 seconds</span>
+                  </li>
+                  <li className="flex items-start">
+                    <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Supported formats: MP4, WebM, MOV (max 100MB)</span>
                   </li>
                 </ul>
               </div>
