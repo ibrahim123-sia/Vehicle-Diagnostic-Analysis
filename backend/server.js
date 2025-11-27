@@ -1,10 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
-const ffmpeg = require("fluent-ffmpeg");
-const ffmpegPath = require('ffmpeg-static');
 const fs = require("fs");
 const path = require("path");
+const { AssemblyAI } = require("assemblyai");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
@@ -12,8 +11,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Set ffmpeg path
-ffmpeg.setFfmpegPath(ffmpegPath);
+const assemblyClient = new AssemblyAI({
+  apiKey: process.env.ASSEMBLYAI_API_KEY || "c365a3cefbee47d2a8f1ea25ed797d35",
+});
+
+const genAI = new GoogleGenerativeAI(
+  process.env.GEMINI_API_KEY || "AIzaSyAG08T5-jfcrWSIprRxOp1f-tTlY_ocAeo"
+);
 
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -22,9 +26,6 @@ const upload = multer({
     fileSize: 100 * 1024 * 1024,
   }
 });
-
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "AIzaSyAG08T5-jfcrWSIprRxOp1f-tTlY_ocAeo");
 
 const vehicleKeywords = [
   "brake pedal", "brake pads", "brake discs", "brake fluid", "brake lines",
@@ -48,9 +49,7 @@ const vehicleKeywords = [
   "fuel pump", "fuel injector", "fuel filter", "fuel leak",
   "side mirror", "windshield crack", "door lock", "window regulator",
   "seat belt", "air conditioning", "heater problem",
-  "oil leak", "power loss", "check engine", "warning light", "emission problem",
-  "clicking sound", "grinding noise", "whining sound", "squeaking", "rattling",
-  "vibration", "shaking", "pulling", "difficulty starting", "poor fuel economy"
+  "oil leak", "power loss", "check engine", "warning light", "emission problem"
 ];
 
 function advancedKeywordSearch(text) {
@@ -60,7 +59,7 @@ function advancedKeywordSearch(text) {
   
   vehicleKeywords.forEach(keyword => {
     const lowerKeyword = keyword.toLowerCase();
-    const wordRegex = new RegExp(`\\b${lowerKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    const wordRegex = new RegExp(`\\b${lowerKeyword}\\b`, 'gi');
     const exactMatches = lowerText.match(wordRegex);
     const partialMatch = lowerText.includes(lowerKeyword);
     
@@ -76,14 +75,11 @@ function advancedKeywordSearch(text) {
       if (lowerKeyword.includes('engine') || lowerKeyword.includes('motor')) {
         keywordCategories.engine = true;
       }
-      if (lowerKeyword.includes('electrical') || lowerKeyword.includes('battery') || lowerKeyword.includes('light') || lowerKeyword.includes('fuse')) {
+      if (lowerKeyword.includes('electrical') || lowerKeyword.includes('battery') || lowerKeyword.includes('light')) {
         keywordCategories.electrical = true;
       }
       if (lowerKeyword.includes('transmission') || lowerKeyword.includes('gear') || lowerKeyword.includes('clutch')) {
         keywordCategories.transmission = true;
-      }
-      if (lowerKeyword.includes('suspension') || lowerKeyword.includes('shock') || lowerKeyword.includes('strut')) {
-        keywordCategories.suspension = true;
       }
     }
   });
@@ -114,30 +110,28 @@ function parseGeminiResponse(responseText) {
   }
 }
 
-async function analyzeWithGemini(transcription, fileName) {
+async function analyzeWithGemini(text) {
   try {
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash",
     });
 
     const prompt = `
-Analyze this vehicle problem description from a video recording and return ONLY valid JSON without any markdown formatting:
+Analyze this vehicle problem description and return ONLY valid JSON without any markdown formatting:
 
-VIDEO FILE: ${fileName}
-TRANSCRIPT: "${transcription}"
+TRANSCRIPT: "${text}"
 
 Return JSON with this exact structure:
 {
-  "mainProblem": "Brief specific description of the main vehicle issue mentioned",
-  "problemType": "brake|tire|engine|electrical|suspension|transmission|cooling|exhaust|fuel|other",
-  "specificIssues": ["array", "of", "specific", "problems", "mentioned", "in", "the", "audio"],
+  "mainProblem": "Brief description of the main vehicle issue",
+  "problemType": "brake|tire|engine|electrical|suspension|transmission|oil|other",
+  "specificIssues": ["list", "of", "specific", "problems", "mentioned"],
   "severity": "low|medium|high",
-  "keywords": ["relevant", "technical", "keywords", "extracted", "from", "the", "description"],
-  "recommendation": "Specific repair advice from mechanic perspective based on the issues described"
+  "keywords": ["relevant", "technical", "keywords", "from", "text"],
+  "recommendation": "Specific repair advice from mechanic perspective"
 }
 
-Focus on the actual vehicle mechanical issues described in the audio. Be specific about the problems mentioned.
-Return ONLY the JSON object without any additional text or markdown.
+Focus on vehicle mechanical issues. Return ONLY the JSON object without any additional text or markdown.
 `;
 
     const result = await model.generateContent(prompt);
@@ -151,237 +145,112 @@ Return ONLY the JSON object without any additional text or markdown.
       ...analysis,
     };
   } catch (error) {
-    console.error("Gemini analysis error:", error);
     throw new Error(`AI analysis failed: ${error.message}`);
   }
 }
 
-// Function to extract audio from video and convert to text using Gemini
-async function extractAndTranscribeAudio(videoBuffer, fileName) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      // Create temporary files
-      const tempDir = '/tmp';
-      const inputPath = path.join(tempDir, `input-${Date.now()}-${fileName}`);
-      const outputPath = path.join(tempDir, `output-${Date.now()}.mp3`);
-      
-      // Write video buffer to temporary file
-      fs.writeFileSync(inputPath, videoBuffer);
-      
-      console.log("Extracting audio from video...");
-      
-      // Extract audio using ffmpeg
-      ffmpeg(inputPath)
-        .output(outputPath)
-        .audioCodec('libmp3lame')
-        .audioFrequency(16000)
-        .on('end', async () => {
-          try {
-            console.log("Audio extraction completed");
-            
-            // Read the audio file
-            const audioBuffer = fs.readFileSync(outputPath);
-            
-            // Convert audio to base64 for Gemini
-            const base64Audio = audioBuffer.toString('base64');
-            
-            // Use Gemini to transcribe audio
-            const model = genAI.getGenerativeModel({
-              model: "gemini-1.5-flash",
-            });
-            
-            const prompt = "Please transcribe the audio from this vehicle diagnostic video. Focus on the vehicle problems, symptoms, and issues described by the user.";
-            
-            const result = await model.generateContent([
-              prompt,
-              {
-                inlineData: {
-                  mimeType: "audio/mp3",
-                  data: base64Audio
-                }
-              }
-            ]);
-            
-            const response = await result.response;
-            const transcription = response.text();
-            
-            console.log("Transcription completed");
-            
-            // Clean up temporary files
-            try {
-              fs.unlinkSync(inputPath);
-              fs.unlinkSync(outputPath);
-            } catch (cleanupError) {
-              console.error("Cleanup error:", cleanupError);
-            }
-            
-            resolve({
-              success: true,
-              text: transcription,
-              language: "en"
-            });
-            
-          } catch (transcriptionError) {
-            // Clean up temporary files even if transcription fails
-            try {
-              fs.unlinkSync(inputPath);
-              fs.unlinkSync(outputPath);
-            } catch (cleanupError) {
-              console.error("Cleanup error:", cleanupError);
-            }
-            reject(transcriptionError);
-          }
-        })
-        .on('error', (error) => {
-          // Clean up temporary files
-          try {
-            fs.unlinkSync(inputPath);
-            if (fs.existsSync(outputPath)) {
-              fs.unlinkSync(outputPath);
-            }
-          } catch (cleanupError) {
-            console.error("Cleanup error:", cleanupError);
-          }
-          reject(new Error(`Audio extraction failed: ${error.message}`));
-        })
-        .run();
-        
-    } catch (error) {
-      reject(new Error(`Audio processing failed: ${error.message}`));
-    }
-  });
-}
+// Add transcribeAudio function
+async function transcribeAudio(audioPath) {
+  try {
+    const audioUrl = await assemblyClient.files.upload(audioPath);
+    const transcript = await assemblyClient.transcripts.transcribe({
+      audio: audioUrl,
+    });
 
-// Fallback transcription for when audio processing fails
-function getFallbackTranscription(fileName) {
-  return `Audio from ${fileName}. The video contains a vehicle diagnostic recording. Please ensure the audio is clear and describes the vehicle issues in detail for proper analysis.`;
+    return {
+      success: true,
+      text: transcript.text,
+      language: transcript.language_code,
+    };
+  } catch (error) {
+    console.error("AssemblyAI error:", error.message);
+    return { success: false, error: error.message };
+  }
 }
 
 // Test endpoint
 app.post("/test", upload.single("recording"), (req, res) => {
-  console.log("Test endpoint - File received:", {
-    size: req.file?.size,
-    type: req.file?.mimetype,
-    name: req.file?.originalname
-  });
-  
   res.json({ 
     success: true, 
-    message: "Server is working! File received successfully.",
-    fileSize: req.file?.size,
-    fileName: req.file?.originalname,
-    fileType: req.file?.mimetype,
-    timestamp: new Date().toISOString()
+    message: "File received successfully",
+    fileSize: req.file?.size 
   });
 });
 
 // Main processing endpoint
 app.post("/process-recording", upload.single("recording"), async (req, res) => {
-  console.log("=== PROCESSING REQUEST ===");
-  
   try {
     if (!req.file) {
-      console.log("No file received");
-      return res.status(400).json({ 
-        success: false,
-        error: "No file received",
-        message: "Please select a video file to analyze" 
-      });
+      return res.status(400).json({ error: "No recording received" });
     }
 
-    console.log("Processing file:", {
-      size: req.file.size,
-      type: req.file.mimetype,
-      name: req.file.originalname
-    });
+    console.log("Processing recording... File size:", req.file.size);
 
-    let transcription;
-    let analysis;
+    // Create a temporary file in /tmp directory
+    const tempFilePath = `/tmp/audio-${Date.now()}.webm`;
+    fs.writeFileSync(tempFilePath, req.file.buffer);
 
     try {
-      // Step 1: Extract audio and transcribe
-      console.log("Starting audio extraction and transcription...");
-      transcription = await extractAndTranscribeAudio(req.file.buffer, req.file.originalname);
-      
+      // Step 1: Transcribe with AssemblyAI
+      console.log("Starting transcription...");
+      const transcription = await transcribeAudio(tempFilePath);
+
       if (!transcription.success) {
-        console.log("Transcription failed, using fallback");
-        transcription = {
-          success: true,
-          text: getFallbackTranscription(req.file.originalname),
-          language: "en"
-        };
+        throw new Error(`Transcription failed: ${transcription.error}`);
       }
 
-      console.log("Transcription completed, length:", transcription.text?.length);
+      console.log("Transcription successful, length:", transcription.text.length);
 
-      // If transcription is too short or seems like an error, use fallback
-      if (!transcription.text || transcription.text.length < 10) {
-        transcription.text = getFallbackTranscription(req.file.originalname);
-      }
-
-      // Step 2: Perform keyword analysis
+      // Step 2: Search for keywords
       const keywordResults = advancedKeywordSearch(transcription.text);
-      console.log("Keyword analysis found:", keywordResults.totalMatches, "matches");
+      console.log("Keyword search found:", keywordResults.totalMatches, "matches");
 
       // Step 3: Analyze with Gemini
-      console.log("Starting AI analysis with Gemini...");
-      analysis = await analyzeWithGemini(transcription.text, req.file.originalname);
+      console.log("Starting AI analysis...");
+      const analysis = await analyzeWithGemini(transcription.text);
       console.log("AI analysis completed");
 
-    } catch (processingError) {
-      console.error("Processing error:", processingError);
-      
-      // Create fallback analysis based on file info
-      transcription = {
-        text: `Video analysis for ${req.file.originalname}. ${processingError.message}`,
-        language: "en"
+      const response = {
+        success: true,
+        message: "Live Recording Analysis Completed!",
+        analysis: {
+          transcription: transcription.text,
+          mainProblem: analysis.mainProblem,
+          problemType: analysis.problemType,
+          specificIssues: analysis.specificIssues,
+          severity: analysis.severity,
+          keywords: analysis.keywords,
+          recommendation: analysis.recommendation,
+          word_count: transcription.text.split(/\s+/).length,
+          problem_count: analysis.specificIssues.length,
+          aiModel: "gemini-2.0-flash",
+          keywordSearch: {
+            foundKeywords: keywordResults.foundKeywords,
+            categories: keywordResults.categories,
+            totalKeywordsFound: keywordResults.totalMatches,
+            keywordMatch: keywordResults.totalMatches > 0,
+            totalMatches: keywordResults.totalMatches
+          }
+        },
       };
-      
-      const keywordResults = advancedKeywordSearch(transcription.text);
-      analysis = {
-        mainProblem: "Video analysis in progress - please describe vehicle issues clearly in audio",
-        problemType: "other",
-        specificIssues: ["Ensure clear audio description of vehicle problems", "Describe symptoms and when they occur"],
-        severity: "medium",
-        keywords: ["vehicle", "diagnostic", "inspection"],
-        recommendation: "Please record a new video with clear audio description of the vehicle issues. Speak clearly about the symptoms, when they occur, and what you've noticed."
-      };
-    }
 
-    const response = {
-      success: true,
-      message: "Analysis completed successfully!",
-      analysis: {
-        transcription: transcription.text,
-        mainProblem: analysis.mainProblem,
-        problemType: analysis.problemType,
-        specificIssues: analysis.specificIssues,
-        severity: analysis.severity,
-        keywords: analysis.keywords,
-        recommendation: analysis.recommendation,
-        word_count: transcription.text.split(/\s+/).length,
-        problem_count: analysis.specificIssues.length,
-        aiModel: "gemini-1.5-flash",
-        keywordSearch: {
-          foundKeywords: advancedKeywordSearch(transcription.text).foundKeywords,
-          categories: advancedKeywordSearch(transcription.text).categories,
-          totalKeywordsFound: advancedKeywordSearch(transcription.text).totalMatches,
-          keywordMatch: advancedKeywordSearch(transcription.text).totalMatches > 0,
-          totalMatches: advancedKeywordSearch(transcription.text).totalMatches
+      res.json(response);
+    } finally {
+      // Clean up temporary file
+      try {
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
         }
-      },
-    };
-
-    console.log("Sending successful response");
-    res.json(response);
+      } catch (cleanupError) {
+        console.error("Cleanup error:", cleanupError.message);
+      }
+    }
 
   } catch (error) {
     console.error("Server error:", error);
     res.status(500).json({ 
-      success: false,
-      error: "Processing failed",
-      message: "We're experiencing technical difficulties. Please try again later.",
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: "Server error",
+      message: error.message 
     });
   }
 });
@@ -389,15 +258,11 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
 // Health check endpoint
 app.get("/", (req, res) => {
   res.json({
-    message: "Vehicle Problem Detector API",
-    status: "Operational",
-    version: "2.0.0",
-    features: ["Real audio transcription", "AI analysis", "Video processing"],
+    message: "Vehicle Problem Detector - Live Recording Only",
+    status: "Ready for live video recording analysis",
+    features: ["Live recording", "Keyword search", "AI analysis"],
     totalKeywords: vehicleKeywords.length,
-    environment: process.env.NODE_ENV || 'development',
-    maxFileSize: "100MB",
-    supportedFormats: "All video formats with audio",
-    timestamp: new Date().toISOString()
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -410,6 +275,5 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`Vehicle Problem Detector running on port ${PORT}`);
     console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
-    console.log(`Server ready for real video processing!`);
   });
 }
