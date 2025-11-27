@@ -184,65 +184,33 @@ const VideoProblemDetector = () => {
     }
   };
 
-  // Download original video
-  const downloadOriginalVideo = () => {
-    if (!recordedBlob) return;
+  // Download enhanced video with analysis
+  const downloadEnhancedVideo = () => {
+    if (!analysis || !analysis.enhancedVideo) return;
 
-    const url = URL.createObjectURL(recordedBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vehicle-recording-${Date.now()}.webm`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  // Download analysis report
-  const downloadAnalysisReport = () => {
-    if (!analysis) return;
-
-    const reportContent = `
-VEHICLE DIAGNOSTIC ANALYSIS REPORT
-=================================
-
-TRANSCRIPT:
-${analysis.transcription}
-
-DETECTED ISSUES:
-${analysis.keywordSearch.foundKeywords.map((keyword, index) => `${index + 1}. ${keyword}`).join('\n')}
-
-PRIMARY PROBLEM:
-${analysis.mainProblem}
-
-PROBLEM TYPE: ${analysis.problemType}
-SEVERITY: ${analysis.severity.toUpperCase()}
-
-SPECIFIC ISSUES:
-${analysis.specificIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}
-
-TECHNICAL TERMS:
-${analysis.keywords.join(', ')}
-
-RECOMMENDATION:
-${analysis.recommendation}
-
-ANALYSIS DETAILS:
-- Words processed: ${analysis.word_count}
-- Problems identified: ${analysis.problem_count}
-- AI Model: ${analysis.aiModel}
-- Generated on: ${new Date().toLocaleString()}
-    `.trim();
-
-    const blob = new Blob([reportContent], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vehicle-analysis-report-${Date.now()}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      // Convert base64 back to blob
+      const binaryString = atob(analysis.enhancedVideo.data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: analysis.enhancedVideo.type });
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = analysis.enhancedVideo.fileName || `diagnostic-video-${Date.now()}.webm`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      setMessage('Enhanced video downloaded!');
+    } catch (error) {
+      setMessage('Error downloading enhanced video');
+      console.error('Download error:', error);
+    }
   };
 
   // Reset and start new recording
@@ -418,21 +386,12 @@ ANALYSIS DETAILS:
                     )}
                   </button>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <button 
-                      onClick={startNewRecording}
-                      className="py-2 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
-                    >
-                      New Input
-                    </button>
-                    
-                    <button 
-                      onClick={downloadOriginalVideo}
-                      className="py-2 px-4 rounded-lg font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors"
-                    >
-                      Download Video
-                    </button>
-                  </div>
+                  <button 
+                    onClick={startNewRecording}
+                    className="w-full py-2 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
+                  >
+                    New Input
+                  </button>
                 </div>
               )}
             </div>
@@ -465,21 +424,28 @@ ANALYSIS DETAILS:
                   </span>
                 </div>
 
-                {/* Download Buttons */}
-                <div className="flex gap-2 mb-6">
-                  <button 
-                    onClick={downloadAnalysisReport}
-                    className="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors"
-                  >
-                    Download Report
-                  </button>
-                  <button 
-                    onClick={downloadOriginalVideo}
-                    className="flex-1 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors"
-                  >
-                    Download Video
-                  </button>
-                </div>
+                {/* Download Enhanced Video Button */}
+                <button 
+                  onClick={downloadEnhancedVideo}
+                  className="w-full mb-6 py-3 px-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors flex items-center justify-center"
+                >
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download Video with Analysis
+                </button>
+
+                {/* Analysis Text Preview */}
+                {analysis.analysisText && (
+                  <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                      Analysis Summary
+                    </h3>
+                    <div className="bg-white p-3 rounded border max-h-40 overflow-y-auto">
+                      <pre className="text-sm text-gray-700 whitespace-pre-wrap">{analysis.analysisText}</pre>
+                    </div>
+                  </div>
+                )}
 
                 {/* Keyword Matches */}
                 {analysis.keywordSearch && analysis.keywordSearch.foundKeywords.length > 0 && (
@@ -532,22 +498,6 @@ ANALYSIS DETAILS:
                   <p className="text-gray-700 text-sm">{analysis.recommendation}</p>
                 </div>
 
-                {/* Technical Terms */}
-                {analysis.keywords && analysis.keywords.length > 0 && (
-                  <div className="mb-6">
-                    <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                      Technical Terms Identified
-                    </h3>
-                    <div className="flex flex-wrap gap-2">
-                      {analysis.keywords.map((keyword, index) => (
-                        <span key={index} className="px-3 py-1 bg-gray-100 text-gray-700 rounded text-sm border">
-                          {keyword}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 {/* Transcription */}
                 <div className="mb-4">
                   <h3 className="text-lg font-semibold text-gray-800 mb-3">
@@ -583,7 +533,7 @@ ANALYSIS DETAILS:
                     <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span>Speak clearly and describe the vehicle problem in detail</span>
+                    <span>Download the enhanced video with analysis overlay</span>
                   </li>
                   <li className="flex items-start">
                     <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -601,4 +551,4 @@ ANALYSIS DETAILS:
   );
 };
 
-export default VideoProblemDetector;
+export default VideoProblemDetector;.
