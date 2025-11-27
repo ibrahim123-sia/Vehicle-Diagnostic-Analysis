@@ -16,7 +16,8 @@ const VideoProblemDetector = () => {
   const timerRef = useRef(null);
 
   // Use environment variable for API URL
-  const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'VITE_SERVER_URL=https://vehicle-diagnostic-analysis.vercel.app';
+  // Correct way:
+const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnostic-analysis.vercel.app';
 
   // Start live recording
   const startRecording = async () => {
