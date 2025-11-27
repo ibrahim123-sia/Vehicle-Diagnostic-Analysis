@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+ import React, { useState, useRef } from 'react';
 import axios from 'axios';
 
 const VideoProblemDetector = () => {
@@ -13,7 +13,6 @@ const VideoProblemDetector = () => {
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
   const videoPreviewRef = useRef(null);
-  const fileInputRef = useRef(null);
   const timerRef = useRef(null);
 
   // Use environment variable for API URL
@@ -104,39 +103,6 @@ const VideoProblemDetector = () => {
     }
   };
 
-  // Handle manual file upload
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    // Check if file is a video
-    if (!file.type.startsWith('video/')) {
-      setMessage('Please upload a video file');
-      return;
-    }
-
-    // Check file size (100MB limit)
-    if (file.size > 100 * 1024 * 1024) {
-      setMessage('File size too large. Please select a video under 100MB.');
-      return;
-    }
-
-    setRecordedBlob(file);
-    setMessage(`File "${file.name}" selected. Ready for analysis.`);
-    
-    // Create preview for uploaded file
-    const videoURL = URL.createObjectURL(file);
-    if (videoPreviewRef.current) {
-      videoPreviewRef.current.src = videoURL;
-      videoPreviewRef.current.controls = true;
-    }
-  };
-
-  // Trigger file input click
-  const triggerFileInput = () => {
-    fileInputRef.current?.click();
-  };
-
   // Format time for display
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -159,6 +125,7 @@ const VideoProblemDetector = () => {
     formData.append('recording', recordedBlob, `vehicle-recording-${Date.now()}.webm`);
 
     try {
+      // Use the environment variable for API URL
       const response = await axios.post(`${API_BASE_URL}/process-recording`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -268,15 +235,6 @@ const VideoProblemDetector = () => {
               </div>
             )}
 
-            {/* Hidden file input for manual upload */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept="video/*"
-              className="hidden"
-            />
-
             {/* Recording Controls */}
             <div className="space-y-3">
               {!recordedBlob ? (
@@ -304,19 +262,6 @@ const VideoProblemDetector = () => {
                         Start Recording
                       </span>
                     )}
-                  </button>
-
-                  {/* Manual Upload Button */}
-                  <button 
-                    onClick={triggerFileInput}
-                    className="w-full py-3 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
-                  >
-                    <span className="flex items-center justify-center">
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      Upload Video File
-                    </span>
                   </button>
 
                   {isRecording && (
