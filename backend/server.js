@@ -16,7 +16,7 @@ const assemblyClient = new AssemblyAI({
 });
 
 const genAI = new GoogleGenerativeAI(
-  process.env.GEMINI_API_KEY || "AIzaSyAG08T5-jfcrWSIprRxOp1f-tTlY_ocAeo"
+  process.env.GEMINI_API_KEY || "AIzaSyB4mnFvFN8AES4vMmEUM30eeEUWKsHEV-E"
 );
 
 const storage = multer.memoryStorage();
@@ -186,8 +186,13 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
 
     console.log("Processing recording... File size:", req.file.size);
 
-    // Create a temporary file in /tmp directory
-    const tempFilePath = `/tmp/audio-${Date.now()}.webm`;
+    // Create a temporary file
+    const tempDir = path.join(__dirname, 'temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const tempFilePath = path.join(tempDir, `audio-${Date.now()}.webm`);
     fs.writeFileSync(tempFilePath, req.file.buffer);
 
     try {
@@ -266,14 +271,10 @@ app.get("/", (req, res) => {
   });
 });
 
-// For Vercel serverless compatibility
-module.exports = app;
-
-// Only start server if not in Vercel environment
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-  const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => {
-    console.log(`Vehicle Problem Detector running on port ${PORT}`);
-    console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
-  });
-}
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Vehicle Problem Detector running on port ${PORT}`);
+  console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});
