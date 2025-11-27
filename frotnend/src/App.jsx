@@ -16,8 +16,7 @@ const VideoProblemDetector = () => {
   const timerRef = useRef(null);
 
   // Use environment variable for API URL
-  // Correct way:
-const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnostic-analysis.vercel.app';
+  const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnostic-analysis.vercel.app';
 
   // Start live recording
   const startRecording = async () => {
@@ -339,29 +338,118 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
                   </span>
                 </div>
 
-                {/* Keyword Matches */}
-                {analysis.keywordSearch && analysis.keywordSearch.foundKeywords.length > 0 && (
-                  <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                    <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                      Keywords Found ({analysis.keywordSearch.totalKeywordsFound})
-                    </h3>
-                    <div className="flex flex-wrap gap-2">
-                      {analysis.keywordSearch.foundKeywords.map((keyword, index) => (
-                        <span key={index} className="px-3 py-1 bg-white text-blue-700 rounded border border-blue-200 text-sm font-medium">
-                          {keyword}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                {/* Keyword Matches - Enhanced Section */}
+                {analysis.keywordSearch && (
+                  <>
+                    {/* When keywords are found in library */}
+                    {analysis.keywordSearch.foundKeywords && analysis.keywordSearch.foundKeywords.length > 0 ? (
+                      <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="text-lg font-semibold text-gray-800 flex items-center">
+                            <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            Issues Found in Knowledge Base
+                          </h3>
+                          <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-medium">
+                            {analysis.keywordSearch.totalKeywordsFound || analysis.keywordSearch.foundKeywords.length} matches
+                          </span>
+                        </div>
+                        
+                        <div className="mb-3">
+                          <p className="text-sm text-green-700 mb-2">
+                            These issues were identified from our vehicle problem database of {analysis.keywordSearch.librarySize || '100+'} known issues:
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {analysis.keywordSearch.foundKeywords.map((keyword, index) => (
+                              <span 
+                                key={index} 
+                                className="px-3 py-2 bg-white text-green-700 rounded-lg border border-green-200 text-sm font-medium shadow-sm flex items-center"
+                              >
+                                <svg className="w-3 h-3 mr-2 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                                {keyword}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Categories Found */}
+                        {analysis.keywordSearch.categories && analysis.keywordSearch.categories.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-green-200">
+                            <p className="text-sm text-green-700 mb-2 font-medium">Problem categories detected:</p>
+                            <div className="flex flex-wrap gap-2">
+                              {analysis.keywordSearch.categories.map((category, index) => (
+                                <span key={index} className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-medium capitalize">
+                                  {category} issues
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      /* When NO keywords are found in library */
+                      <div className="mb-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                        <div className="flex items-center mb-3">
+                          <svg className="w-5 h-5 text-yellow-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                          <h3 className="text-lg font-semibold text-gray-800">No Exact Matches in Knowledge Base</h3>
+                        </div>
+                        <div className="text-sm text-yellow-700 space-y-2">
+                          <p>
+                            <strong>No specific issues were found in our vehicle problem database.</strong> This could mean:
+                          </p>
+                          <ul className="list-disc list-inside space-y-1 ml-2">
+                            <li>Your issue description uses different terminology</li>
+                            <li>This might be a rare or complex vehicle problem</li>
+                            <li>The issue requires specialized diagnostic equipment</li>
+                          </ul>
+                          <p className="mt-2">
+                            The AI analysis below is based on general understanding of your description rather than exact database matches.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* Problem Overview */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   <div className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
                     <h3 className="text-sm font-medium text-gray-600 mb-2">Primary Issue</h3>
-                    <p className="text-gray-700">{analysis.mainProblem}</p>
+                    <p className="text-gray-700 font-medium">{analysis.mainProblem}</p>
+                  </div>
+                  <div className="p-4 rounded-lg border-2 border-purple-200 bg-purple-50">
+                    <h3 className="text-sm font-medium text-gray-600 mb-2">Problem Type</h3>
+                    <div className="flex items-center">
+                      {getProblemIcon(analysis.problemType)}
+                      <span className="ml-3 text-gray-700 font-medium capitalize">{analysis.problemType} Problem</span>
+                    </div>
                   </div>
                 </div>
+
+                {/* Severity Indicator */}
+                {analysis.severity && (
+                  <div className="mb-6 p-4 rounded-lg border-2 bg-white">
+                    <h3 className="text-sm font-medium text-gray-600 mb-2">Severity Level</h3>
+                    <div className={`inline-flex items-center px-4 py-2 rounded-full font-medium ${
+                      analysis.severity === 'high' 
+                        ? 'bg-red-100 text-red-800 border border-red-200' 
+                        : analysis.severity === 'medium'
+                        ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                        : 'bg-green-100 text-green-800 border border-green-200'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full mr-2 ${
+                        analysis.severity === 'high' ? 'bg-red-500' :
+                        analysis.severity === 'medium' ? 'bg-yellow-500' : 'bg-green-500'
+                      }`}></span>
+                      {analysis.severity.toUpperCase()} Severity
+                    </div>
+                  </div>
+                )}
 
                 {/* Specific Issues */}
                 <div className="mb-6">
@@ -369,7 +457,7 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
                     Identified Problems
                   </h3>
                   <div className="space-y-2">
-                    {analysis.specificIssues.map((issue, index) => (
+                    {analysis.specificIssues && analysis.specificIssues.map((issue, index) => (
                       <div key={index} className="p-3 bg-red-50 rounded border border-red-100">
                         <span className="text-red-700 text-sm">{issue}</span>
                       </div>
@@ -444,7 +532,20 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
                     </svg>
                     <span>Optimal recording length: 30-120 seconds</span>
                   </li>
+                  <li className="flex items-start">
+                    <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Use common vehicle terminology for better database matching</span>
+                  </li>
                 </ul>
+
+                <div className="mt-4 p-3 bg-blue-50 rounded border border-blue-200">
+                  <h4 className="text-sm font-medium text-blue-800 mb-1">About Our Knowledge Base</h4>
+                  <p className="text-xs text-blue-700">
+                    We match your description against a database of 100+ common vehicle issues including brake, engine, tire, electrical, and transmission problems.
+                  </p>
+                </div>
               </div>
             )}
           </div>
