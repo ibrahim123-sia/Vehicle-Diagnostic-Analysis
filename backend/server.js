@@ -57,7 +57,7 @@ const vehicleKeywords = [
   "fuel pump", "fuel injector", "fuel filter", "fuel leak",
   "side mirror", "windshield crack", "door lock", "window regulator",
   "seat belt", "air conditioning", "heater problem",
-  "oil leak", "power loss", "check engine", "warning light", "emission problem"
+  "oil leak", "power loss", "check engine", "warning light", "emission problem","suspension bushings"
 ];
 
 function advancedKeywordSearch(text) {
