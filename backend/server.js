@@ -1,4 +1,4 @@
-const express = require("express");
+ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
@@ -149,34 +149,19 @@ Focus on vehicle mechanical issues. Return ONLY the JSON object without any addi
   }
 }
 
-// Updated transcribeAudio function to handle both file paths and buffers
-async function transcribeAudio(audioBuffer, originalName = 'audio.webm') {
+// Add transcribeAudio function
+async function transcribeAudio(audioPath) {
   try {
-    // Create a temporary file in /tmp directory
-    const tempFilePath = `/tmp/${Date.now()}-${originalName}`;
-    fs.writeFileSync(tempFilePath, audioBuffer);
+    const audioUrl = await assemblyClient.files.upload(audioPath);
+    const transcript = await assemblyClient.transcripts.transcribe({
+      audio: audioUrl,
+    });
 
-    try {
-      const audioUrl = await assemblyClient.files.upload(tempFilePath);
-      const transcript = await assemblyClient.transcripts.transcribe({
-        audio: audioUrl,
-      });
-
-      return {
-        success: true,
-        text: transcript.text,
-        language: transcript.language_code,
-      };
-    } finally {
-      // Clean up temporary file
-      try {
-        if (fs.existsSync(tempFilePath)) {
-          fs.unlinkSync(tempFilePath);
-        }
-      } catch (cleanupError) {
-        console.error("Cleanup error:", cleanupError.message);
-      }
-    }
+    return {
+      success: true,
+      text: transcript.text,
+      language: transcript.language_code,
+    };
   } catch (error) {
     console.error("AssemblyAI error:", error.message);
     return { success: false, error: error.message };
@@ -188,9 +173,7 @@ app.post("/test", upload.single("recording"), (req, res) => {
   res.json({ 
     success: true, 
     message: "File received successfully",
-    fileSize: req.file?.size,
-    fileName: req.file?.originalname,
-    fileType: req.file?.mimetype
+    fileSize: req.file?.size 
   });
 });
 
@@ -201,23 +184,22 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
       return res.status(400).json({ error: "No recording received" });
     }
 
-    console.log("Processing recording... File size:", req.file.size, "Type:", req.file.mimetype);
+    console.log("Processing recording... File size:", req.file.size);
+
+    // Create a temporary file in /tmp directory
+    const tempFilePath = `/tmp/audio-${Date.now()}.webm`;
+    fs.writeFileSync(tempFilePath, req.file.buffer);
 
     try {
-      // Step 1: Transcribe with AssemblyAI using the buffer directly
+      // Step 1: Transcribe with AssemblyAI
       console.log("Starting transcription...");
-      const transcription = await transcribeAudio(req.file.buffer, req.file.originalname);
+      const transcription = await transcribeAudio(tempFilePath);
 
       if (!transcription.success) {
         throw new Error(`Transcription failed: ${transcription.error}`);
       }
 
-      console.log("Transcription successful, length:", transcription.text?.length || 0);
-
-      // If transcription is empty, throw error
-      if (!transcription.text || transcription.text.trim().length === 0) {
-        throw new Error("No speech detected in the audio. Please ensure there is clear audio in the video.");
-      }
+      console.log("Transcription successful, length:", transcription.text.length);
 
       // Step 2: Search for keywords
       const keywordResults = advancedKeywordSearch(transcription.text);
@@ -230,7 +212,7 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
 
       const response = {
         success: true,
-        message: "Video Analysis Completed!",
+        message: "Live Recording Analysis Completed!",
         analysis: {
           transcription: transcription.text,
           mainProblem: analysis.mainProblem,
@@ -253,13 +235,15 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
       };
 
       res.json(response);
-
-    } catch (processingError) {
-      console.error("Processing error:", processingError);
-      res.status(500).json({ 
-        error: "Processing failed",
-        message: processingError.message 
-      });
+    } finally {
+      // Clean up temporary file
+      try {
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+        }
+      } catch (cleanupError) {
+        console.error("Cleanup error:", cleanupError.message);
+      }
     }
 
   } catch (error) {
@@ -274,13 +258,11 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
 // Health check endpoint
 app.get("/", (req, res) => {
   res.json({
-    message: "Vehicle Problem Detector - Live Recording & File Upload",
-    status: "Ready for video analysis",
-    features: ["Live recording", "File upload", "Keyword search", "AI analysis"],
+    message: "Vehicle Problem Detector - Live Recording Only",
+    status: "Ready for live video recording analysis",
+    features: ["Live recording", "Keyword search", "AI analysis"],
     totalKeywords: vehicleKeywords.length,
-    environment: process.env.NODE_ENV || 'development',
-    maxFileSize: "100MB",
-    supportedFormats: "All video formats with audio"
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -293,5 +275,4 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`Vehicle Problem Detector running on port ${PORT}`);
     console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
-  });
-}
+  })}

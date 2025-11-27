@@ -13,7 +13,6 @@ const VideoProblemDetector = () => {
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
   const videoPreviewRef = useRef(null);
-  const fileInputRef = useRef(null);
   const timerRef = useRef(null);
 
   // Use environment variable for API URL
@@ -104,39 +103,6 @@ const VideoProblemDetector = () => {
     }
   };
 
-  // Handle manual file upload
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    // Check if file is a video
-    if (!file.type.startsWith('video/')) {
-      setMessage('Please upload a video file');
-      return;
-    }
-
-    // Check file size (100MB limit)
-    if (file.size > 100 * 1024 * 1024) {
-      setMessage('File size too large. Please select a video under 100MB.');
-      return;
-    }
-
-    setRecordedBlob(file);
-    setMessage(`File "${file.name}" selected. Ready for analysis.`);
-    
-    // Create preview for uploaded file
-    const videoURL = URL.createObjectURL(file);
-    if (videoPreviewRef.current) {
-      videoPreviewRef.current.src = videoURL;
-      videoPreviewRef.current.controls = true;
-    }
-  };
-
-  // Trigger file input click
-  const triggerFileInput = () => {
-    fileInputRef.current?.click();
-  };
-
   // Format time for display
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -144,10 +110,10 @@ const VideoProblemDetector = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Process recorded video or uploaded file
+  // Process recorded video
   const processRecording = async () => {
     if (!recordedBlob) {
-      setMessage('Please record a video or upload a file first');
+      setMessage('Please record a video first');
       return;
     }
 
@@ -156,15 +122,10 @@ const VideoProblemDetector = () => {
     setAnalysis(null);
 
     const formData = new FormData();
-    
-    // Handle both Blob (from recording) and File (from upload)
-    if (recordedBlob instanceof Blob) {
-      formData.append('recording', recordedBlob, `vehicle-recording-${Date.now()}.webm`);
-    } else {
-      formData.append('recording', recordedBlob);
-    }
+    formData.append('recording', recordedBlob, `vehicle-recording-${Date.now()}.webm`);
 
     try {
+      // Use the environment variable for API URL
       const response = await axios.post(`${API_BASE_URL}/process-recording`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -184,85 +145,12 @@ const VideoProblemDetector = () => {
     }
   };
 
-  // Download original video
-  const downloadOriginalVideo = () => {
-    if (!recordedBlob) return;
-
-    const url = URL.createObjectURL(recordedBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vehicle-recording-${Date.now()}.webm`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  // Download analysis report
-  const downloadAnalysisReport = () => {
-    if (!analysis) return;
-
-    const reportContent = `
-VEHICLE DIAGNOSTIC ANALYSIS REPORT
-=================================
-
-TRANSCRIPT:
-${analysis.transcription}
-
-DETECTED ISSUES:
-${analysis.keywordSearch.foundKeywords.map((keyword, index) => `${index + 1}. ${keyword}`).join('\n')}
-
-PRIMARY PROBLEM:
-${analysis.mainProblem}
-
-PROBLEM TYPE: ${analysis.problemType}
-SEVERITY: ${analysis.severity.toUpperCase()}
-
-SPECIFIC ISSUES:
-${analysis.specificIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}
-
-TECHNICAL TERMS:
-${analysis.keywords.join(', ')}
-
-RECOMMENDATION:
-${analysis.recommendation}
-
-ANALYSIS DETAILS:
-- Words processed: ${analysis.word_count}
-- Problems identified: ${analysis.problem_count}
-- AI Model: ${analysis.aiModel}
-- Generated on: ${new Date().toLocaleString()}
-    `.trim();
-
-    const blob = new Blob([reportContent], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vehicle-analysis-report-${Date.now()}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
   // Reset and start new recording
   const startNewRecording = () => {
     setRecordedBlob(null);
     setAnalysis(null);
     setMessage('');
     setRecordingTime(0);
-    
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-    
-    // Reset video preview
-    if (videoPreviewRef.current) {
-      videoPreviewRef.current.src = '';
-      videoPreviewRef.current.srcObject = null;
-      videoPreviewRef.current.controls = false;
-    }
   };
 
   // Severity color coding
@@ -275,6 +163,23 @@ ANALYSIS DETAILS:
     }
   };
 
+  // Problem type icons using SVG or CSS
+  const getProblemIcon = (type) => {
+    return (
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+        type === 'brake' ? 'bg-red-100 text-red-600' :
+        type === 'tire' ? 'bg-blue-100 text-blue-600' :
+        type === 'engine' ? 'bg-orange-100 text-orange-600' :
+        type === 'electrical' ? 'bg-purple-100 text-purple-600' :
+        'bg-gray-100 text-gray-600'
+      }`}>
+        <span className="text-sm font-bold">
+          {type === 'brake' ? 'B' : type === 'tire' ? 'T' : type === 'engine' ? 'E' : type === 'electrical' ? 'C' : 'V'}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 py-4 px-3">
       <div className="max-w-4xl mx-auto">
@@ -285,16 +190,16 @@ ANALYSIS DETAILS:
             Vehicle Diagnostic Analysis
           </h1>
           <p className="text-gray-600">
-            Record or upload vehicle issues for AI-powered diagnostic analysis
+            Record vehicle issues for AI-powered diagnostic analysis
           </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          {/* Recording/Upload Section */}
+          {/* Recording Section */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-4">
-              Video Input
+              Video Recording
             </h2>
 
             {/* Video Preview */}
@@ -330,20 +235,10 @@ ANALYSIS DETAILS:
               </div>
             )}
 
-            {/* Hidden file input */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept="video/*"
-              className="hidden"
-            />
-
-            {/* Recording/Upload Controls */}
+            {/* Recording Controls */}
             <div className="space-y-3">
               {!recordedBlob ? (
                 <>
-                  {/* Live Recording Button */}
                   <button 
                     onClick={isRecording ? stopRecording : startRecording}
                     className={`w-full py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
@@ -367,19 +262,6 @@ ANALYSIS DETAILS:
                         Start Recording
                       </span>
                     )}
-                  </button>
-
-                  {/* Manual Upload Button */}
-                  <button 
-                    onClick={triggerFileInput}
-                    className="w-full py-3 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
-                  >
-                    <span className="flex items-center justify-center">
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      Upload Video File
-                    </span>
                   </button>
 
                   {isRecording && (
@@ -413,26 +295,17 @@ ANALYSIS DETAILS:
                         <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        Analyze Video
+                        Analyze Recording
                       </span>
                     )}
                   </button>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <button 
-                      onClick={startNewRecording}
-                      className="py-2 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
-                    >
-                      New Input
-                    </button>
-                    
-                    <button 
-                      onClick={downloadOriginalVideo}
-                      className="py-2 px-4 rounded-lg font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors"
-                    >
-                      Download Video
-                    </button>
-                  </div>
+                  <button 
+                    onClick={startNewRecording}
+                    className="w-full py-2 px-4 rounded-lg font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-colors"
+                  >
+                    New Recording
+                  </button>
                 </div>
               )}
             </div>
@@ -465,22 +338,6 @@ ANALYSIS DETAILS:
                   </span>
                 </div>
 
-                {/* Download Buttons */}
-                <div className="flex gap-2 mb-6">
-                  <button 
-                    onClick={downloadAnalysisReport}
-                    className="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors"
-                  >
-                    Download Report
-                  </button>
-                  <button 
-                    onClick={downloadOriginalVideo}
-                    className="flex-1 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors"
-                  >
-                    Download Video
-                  </button>
-                </div>
-
                 {/* Keyword Matches */}
                 {analysis.keywordSearch && analysis.keywordSearch.foundKeywords.length > 0 && (
                   <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
@@ -499,11 +356,6 @@ ANALYSIS DETAILS:
 
                 {/* Problem Overview */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                  <div className={`p-4 rounded-lg border-2 ${getSeverityColor(analysis.severity)}`}>
-                    <h3 className="text-sm font-medium text-gray-600 mb-2">Severity Level</h3>
-                    <p className="text-lg font-semibold capitalize">{analysis.severity}</p>
-                  </div>
-                  
                   <div className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
                     <h3 className="text-sm font-medium text-gray-600 mb-2">Primary Issue</h3>
                     <p className="text-gray-700">{analysis.mainProblem}</p>
@@ -564,26 +416,26 @@ ANALYSIS DETAILS:
             {!analysis && (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">
-                  Usage Guidelines
+                  Recording Guidelines
                 </h3>
                 <ul className="text-sm text-gray-600 space-y-3">
                   <li className="flex items-start">
                     <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span><strong>Live Recording:</strong> Record directly from your camera</span>
-                  </li>
-                  <li className="flex items-start">
-                    <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span><strong>Manual Upload:</strong> Upload existing video files</span>
-                  </li>
-                  <li className="flex items-start">
-                    <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
                     <span>Speak clearly and describe the vehicle problem in detail</span>
+                  </li>
+                  <li className="flex items-start">
+                    <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Show the specific vehicle component when possible</span>
+                  </li>
+                  <li className="flex items-start">
+                    <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Record in a quiet environment for better audio quality</span>
                   </li>
                   <li className="flex items-start">
                     <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
