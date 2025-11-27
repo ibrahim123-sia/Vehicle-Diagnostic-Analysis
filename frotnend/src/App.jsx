@@ -551,4 +551,4 @@ const VideoProblemDetector = () => {
   );
 };
 
-export default VideoProblemDetector;.
+export default VideoProblemDetector;
