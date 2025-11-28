@@ -458,7 +458,7 @@ const VideoProblemDetector = () => {
                 {analysis.keywordSearch && analysis.keywordSearch.foundKeywords.length > 0 && (
                   <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
                     <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                      Detected Issues ({analysis.keywordSearch.totalKeywordsFound})
+                      We found issues in our storage ({analysis.keywordSearch.totalKeywordsFound})
                     </h3>
                     <div className="flex flex-wrap gap-2">
                       {analysis.keywordSearch.foundKeywords.map((keyword, index) => (
