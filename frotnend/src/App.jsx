@@ -303,9 +303,7 @@ const VideoProblemDetector = () => {
           <p className="text-gray-600">
             Record vehicle issues for AI-powered diagnostic analysis
           </p>
-          <div className="mt-2 text-sm text-green-600 bg-green-50 p-2 rounded-lg inline-block">
-            No size limits, Chunked upload enabled
-          </div>
+          
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
