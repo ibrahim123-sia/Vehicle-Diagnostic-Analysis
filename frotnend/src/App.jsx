@@ -304,7 +304,7 @@ const VideoProblemDetector = () => {
             Record vehicle issues for AI-powered diagnostic analysis
           </p>
           <div className="mt-2 text-sm text-green-600 bg-green-50 p-2 rounded-lg inline-block">
-            ✅ No size limits - Chunked upload enabled
+            No size limits Chunked upload enabled
           </div>
         </div>
 
@@ -408,9 +408,7 @@ const VideoProblemDetector = () => {
                     <p className="text-xs mt-1">
                       File size: {(recordedBlob.size / (1024 * 1024)).toFixed(2)}MB
                     </p>
-                    <p className="text-xs mt-1 text-green-600 font-medium">
-                      ✅ No size restrictions - Chunked upload enabled
-                    </p>
+                    
                   </div>
                   
                   <button 
@@ -581,13 +579,13 @@ const VideoProblemDetector = () => {
                     <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span><strong>✅ No size limits - Record as long as needed</strong></span>
+                    <span><strong>No size limits - Record as long as needed</strong></span>
                   </li>
                   <li className="flex items-start">
                     <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span><strong>✅ High quality video preserved</strong></span>
+                    <span><strong>High quality video preserved</strong></span>
                   </li>
                 </ul>
               </div>
