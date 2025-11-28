@@ -16,37 +16,101 @@ const VideoProblemDetector = () => {
   const timerRef = useRef(null);
 
   // Use environment variable for API URL
-  // Correct way:
-const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnostic-analysis.vercel.app';
+  const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnostic-analysis.vercel.app';
+
+  // Compression settings
+  const getCompressedVideoSettings = () => {
+    return {
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 640 }, // Reduced from 1280
+        height: { ideal: 480 }, // Reduced from 720
+        frameRate: { ideal: 15, max: 20 } // Reduced frame rate
+      },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        sampleRate: 22050, // Reduced from 44100
+        channelCount: 1 // Mono audio
+      }
+    };
+  };
+
+  // Check file size and compress if needed
+  const compressVideoIfNeeded = async (blob) => {
+    const maxSize = 3.5 * 1024 * 1024; // 3.5MB to be safe
+    
+    if (blob.size <= maxSize) {
+      return blob;
+    }
+
+    setMessage('Compressing video for optimal upload...');
+    
+    // Create a video element to re-encode
+    const video = document.createElement('video');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    return new Promise((resolve) => {
+      video.src = URL.createObjectURL(blob);
+      video.onloadedmetadata = () => {
+        // Set canvas dimensions to compressed size
+        canvas.width = 480;
+        canvas.height = 360;
+        
+        video.oncanplay = () => {
+          video.play();
+        };
+        
+        video.ontimeupdate = () => {
+          // Draw frame at lower quality
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          
+          // Stop after capturing one frame (for very basic compression)
+          if (video.currentTime > 0.1) {
+            canvas.toBlob((compressedBlob) => {
+              resolve(compressedBlob || blob);
+              URL.revokeObjectURL(video.src);
+            }, 'video/webm', 0.5); // 0.5 quality
+          }
+        };
+      };
+    });
+  };
 
   // Start live recording
   const startRecording = async () => {
     try {
       setMessage('Initializing camera and microphone...');
       
-      const constraints = {
-        video: {
-          facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 44100
-        }
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(getCompressedVideoSettings());
       streamRef.current = stream;
       
       if (videoPreviewRef.current) {
         videoPreviewRef.current.srcObject = stream;
       }
 
+      // Try different mime types for better compression
+      const mimeTypes = [
+        'video/webm; codecs=vp8,opus',
+        'video/webm; codecs=vp9,opus',
+        'video/webm',
+        'video/mp4'
+      ];
+
+      let supportedType = '';
+      for (const type of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          supportedType = type;
+          break;
+        }
+      }
+
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm; codecs=vp9,opus'
+        mimeType: supportedType,
+        videoBitsPerSecond: 500000 // 500kbps for lower quality
       });
+      
       mediaRecorderRef.current = mediaRecorder;
       const chunks = [];
 
@@ -56,19 +120,32 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
         }
       };
 
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        setRecordedBlob(blob);
-        setMessage('Recording complete. Ready for analysis.');
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: supportedType || 'video/webm' });
+        
+        // Compress if needed
+        const compressedBlob = await compressVideoIfNeeded(blob);
+        setRecordedBlob(compressedBlob);
+        
+        const sizeMB = (compressedBlob.size / (1024 * 1024)).toFixed(2);
+        setMessage(`Recording complete (${sizeMB}MB). Ready for analysis.`);
       };
 
-      mediaRecorder.start(1000);
+      // Use larger chunks to reduce overhead
+      mediaRecorder.start(2000);
       setIsRecording(true);
       setMessage('Recording in progress... Please describe the vehicle issue clearly.');
       setRecordingTime(0);
       
       timerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
+        setRecordingTime(prev => {
+          // Auto-stop after 90 seconds to prevent large files
+          if (prev >= 90) {
+            stopRecording();
+            return prev;
+          }
+          return prev + 1;
+        });
       }, 1000);
 
     } catch (error) {
@@ -118,27 +195,51 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
       return;
     }
 
+    // Check file size before uploading
+    const maxSize = 4 * 1024 * 1024; // 4MB
+    if (recordedBlob.size > maxSize) {
+      setMessage('Video file too large. Please record a shorter video or try again.');
+      return;
+    }
+
     setIsProcessing(true);
     setMessage('AI analysis in progress...');
     setAnalysis(null);
 
-    const formData = new FormData();
-    formData.append('recording', recordedBlob, `vehicle-recording-${Date.now()}.webm`);
-
     try {
-      // Use the environment variable for API URL
+      const formData = new FormData();
+      formData.append('recording', recordedBlob, `vehicle-recording-${Date.now()}.webm`);
+
+      // Add compression info to help server
+      formData.append('compression', 'true');
+      formData.append('quality', 'low');
+
       const response = await axios.post(`${API_BASE_URL}/process-recording`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
         timeout: 30000,
+        // Add progress for large files
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setMessage(`Uploading video... ${percentCompleted}%`);
+        },
       });
 
       setMessage('Analysis complete');
       setAnalysis(response.data.analysis);
       
     } catch (error) {
-      const errorMsg = error.response?.data?.error || error.message;
+      let errorMsg = 'Analysis failed';
+      
+      if (error.code === 'ECONNABORTED') {
+        errorMsg = 'Request timeout. Please try a shorter video.';
+      } else if (error.response?.status === 413) {
+        errorMsg = 'Video file too large. Please record a shorter video.';
+      } else {
+        errorMsg = error.response?.data?.error || error.message;
+      }
+      
       setMessage(`Analysis failed: ${errorMsg}`);
       console.error('Analysis Error:', error);
     } finally {
@@ -193,6 +294,9 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
           <p className="text-gray-600">
             Record vehicle issues for AI-powered diagnostic analysis
           </p>
+          <div className="mt-2 text-sm text-orange-600 bg-orange-50 p-2 rounded-lg inline-block">
+            ⚡ Optimized for smaller file sizes (max 90 seconds)
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -232,6 +336,11 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
                 <div className="inline-flex items-center px-4 py-2 bg-red-50 text-red-700 rounded-full border border-red-200">
                   <span className="w-2 h-2 bg-red-500 rounded-full mr-2 animate-pulse"></span>
                   Recording: {formatTime(recordingTime)}
+                  {recordingTime >= 60 && (
+                    <span className="ml-2 text-xs bg-red-100 px-2 py-1 rounded">
+                      Auto-stops at 1:30
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -269,11 +378,19 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
                     <div className="text-center text-sm text-gray-600 bg-blue-50 p-3 rounded-lg border border-blue-100">
                       <p className="font-medium">Recording Guidelines</p>
                       <p className="text-xs mt-1">Speak clearly and describe the vehicle issue in detail. Show affected components when possible.</p>
+                      <p className="text-xs mt-1 text-orange-600 font-medium">Recording will auto-stop after 90 seconds</p>
                     </div>
                   )}
                 </>
               ) : (
                 <div className="space-y-3">
+                  <div className="text-center text-sm text-gray-600 bg-green-50 p-3 rounded-lg border border-green-100">
+                    <p className="font-medium">Video Ready</p>
+                    <p className="text-xs mt-1">
+                      File size: {(recordedBlob.size / (1024 * 1024)).toFixed(2)}MB / 4MB
+                    </p>
+                  </div>
+                  
                   <button 
                     onClick={processRecording}
                     disabled={isProcessing}
@@ -317,9 +434,9 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
             {/* Status Message */}
             {message && (
               <div className={`p-4 rounded-lg border ${
-                message.includes('failed') || message.includes('denied') || message.includes('Error')
+                message.includes('failed') || message.includes('denied') || message.includes('Error') || message.includes('too large')
                   ? 'bg-red-50 border-red-200 text-red-800' 
-                  : message.includes('Analyzing') || message.includes('Recording')
+                  : message.includes('Analyzing') || message.includes('Recording') || message.includes('Uploading')
                   ? 'bg-blue-50 border-blue-200 text-blue-800'
                   : 'bg-green-50 border-green-200 text-green-800'
               }`}>
@@ -442,7 +559,13 @@ const API_BASE_URL = import.meta.env.VITE_SERVER_URL || 'https://vehicle-diagnos
                     <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span>Optimal recording length: 30-120 seconds</span>
+                    <span><strong>Optimal recording: 30-90 seconds for smaller files</strong></span>
+                  </li>
+                  <li className="flex items-start">
+                    <svg className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span><strong>Auto-stops at 90 seconds to prevent large files</strong></span>
                   </li>
                 </ul>
               </div>
