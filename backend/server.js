@@ -19,13 +19,20 @@ const genAI = new GoogleGenerativeAI(
   process.env.GEMINI_API_KEY
 );
 
+// Configure multer for chunk uploads
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 100 * 1024 * 1024,
+    fileSize: 10 * 1024 * 1024, // 10MB per chunk
   }
 });
+
+// Directory to store chunks temporarily
+const CHUNKS_DIR = '/tmp/chunks';
+if (!fs.existsSync(CHUNKS_DIR)) {
+  fs.mkdirSync(CHUNKS_DIR, { recursive: true });
+}
 
 const vehicleKeywords = [
   "brake pedal", "brake pads", "brake discs", "brake fluid", "brake lines",
@@ -168,17 +175,271 @@ async function transcribeAudio(audioPath) {
   }
 }
 
-// Test endpoint
-app.post("/test", upload.single("recording"), (req, res) => {
-  res.json({ 
-    success: true, 
-    message: "File received successfully",
-    fileSize: req.file?.size 
-  });
+// Clean up old chunks (older than 1 hour)
+function cleanupOldChunks() {
+  try {
+    const files = fs.readdirSync(CHUNKS_DIR);
+    const now = Date.now();
+    const oneHourAgo = now - (60 * 60 * 1000);
+    
+    files.forEach(file => {
+      if (file.startsWith('chunk_')) {
+        const filePath = path.join(CHUNKS_DIR, file);
+        const stats = fs.statSync(filePath);
+        if (stats.mtimeMs < oneHourAgo) {
+          fs.unlinkSync(filePath);
+          console.log(`Cleaned up old chunk: ${file}`);
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Cleanup error:", error.message);
+  }
+}
+
+// Upload chunk endpoint
+app.post("/upload-chunk", upload.single("chunk"), async (req, res) => {
+  try {
+    const { chunkIndex, totalChunks, uploadId, fileName, fileType, fileSize } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "No chunk received" 
+      });
+    }
+
+    if (!chunkIndex || !totalChunks || !uploadId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing required parameters" 
+      });
+    }
+
+    console.log(`Received chunk ${chunkIndex}/${totalChunks} for upload ${uploadId}`);
+
+    // Save chunk to temporary file
+    const chunkFileName = `chunk_${uploadId}_${chunkIndex}.tmp`;
+    const chunkPath = path.join(CHUNKS_DIR, chunkFileName);
+    
+    fs.writeFileSync(chunkPath, req.file.buffer);
+
+    res.json({
+      success: true,
+      message: `Chunk ${chunkIndex} uploaded successfully`,
+      chunkIndex: parseInt(chunkIndex),
+      totalChunks: parseInt(totalChunks),
+      uploadId
+    });
+
+  } catch (error) {
+    console.error("Chunk upload error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Chunk upload failed",
+      message: error.message 
+    });
+  }
 });
 
-// Main processing endpoint
-app.post("/process-recording", upload.single("recording"), async (req, res) => {
+// Merge chunks endpoint
+app.post("/merge-chunks", async (req, res) => {
+  try {
+    const { uploadId, fileName, totalChunks, fileType, fileSize } = req.body;
+
+    if (!uploadId || !fileName || !totalChunks) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing required parameters" 
+      });
+    }
+
+    console.log(`Merging ${totalChunks} chunks for upload ${uploadId}`);
+
+    // Check if all chunks exist
+    const chunks = [];
+    for (let i = 0; i < totalChunks; i++) {
+      const chunkPath = path.join(CHUNKS_DIR, `chunk_${uploadId}_${i}.tmp`);
+      if (!fs.existsSync(chunkPath)) {
+        return res.status(400).json({ 
+          success: false, 
+          error: `Missing chunk ${i}` 
+        });
+      }
+      chunks.push(chunkPath);
+    }
+
+    // Create merged file
+    const mergedFileName = `merged_${uploadId}_${fileName}`;
+    const mergedFilePath = path.join(CHUNKS_DIR, mergedFileName);
+    
+    const writeStream = fs.createWriteStream(mergedFilePath);
+    
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkData = fs.readFileSync(chunks[i]);
+      writeStream.write(chunkData);
+      
+      // Delete chunk file after merging
+      fs.unlinkSync(chunks[i]);
+    }
+    
+    writeStream.end();
+
+    writeStream.on('finish', () => {
+      console.log(`Merged file created: ${mergedFilePath}, size: ${fs.statSync(mergedFilePath).size} bytes`);
+      
+      res.json({
+        success: true,
+        message: "Chunks merged successfully",
+        filePath: mergedFilePath,
+        fileName: mergedFileName,
+        fileSize: fs.statSync(mergedFilePath).size
+      });
+    });
+
+    writeStream.on('error', (error) => {
+      throw error;
+    });
+
+  } catch (error) {
+    console.error("Merge chunks error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to merge chunks",
+      message: error.message 
+    });
+  }
+});
+
+// Cancel upload endpoint
+app.post("/cancel-upload", async (req, res) => {
+  try {
+    const { uploadId } = req.body;
+
+    if (!uploadId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing uploadId" 
+      });
+    }
+
+    console.log(`Cancelling upload: ${uploadId}`);
+
+    // Delete all chunks for this upload
+    const files = fs.readdirSync(CHUNKS_DIR);
+    files.forEach(file => {
+      if (file.includes(uploadId)) {
+        const filePath = path.join(CHUNKS_DIR, file);
+        fs.unlinkSync(filePath);
+        console.log(`Deleted chunk: ${file}`);
+      }
+    });
+
+    res.json({
+      success: true,
+      message: "Upload cancelled and chunks cleaned up"
+    });
+
+  } catch (error) {
+    console.error("Cancel upload error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to cancel upload",
+      message: error.message 
+    });
+  }
+});
+
+// Updated main processing endpoint to work with file path
+app.post("/process-recording", async (req, res) => {
+  try {
+    const { filePath, fileName, fileSize, fileType } = req.body;
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(400).json({ 
+        error: "No valid file path provided" 
+      });
+    }
+
+    console.log("Processing recording from file path:", filePath);
+    console.log("File size:", fileSize);
+
+    try {
+      // Step 1: Transcribe with AssemblyAI
+      console.log("Starting transcription...");
+      const transcription = await transcribeAudio(filePath);
+
+      if (!transcription.success) {
+        throw new Error(`Transcription failed: ${transcription.error}`);
+      }
+
+      console.log("Transcription successful, length:", transcription.text.length);
+
+      // Step 2: Search for keywords
+      const keywordResults = advancedKeywordSearch(transcription.text);
+      console.log("Keyword search found:", keywordResults.totalMatches, "matches");
+
+      // Step 3: Analyze with Gemini
+      console.log("Starting AI analysis...");
+      const analysis = await analyzeWithGemini(transcription.text);
+      console.log("AI analysis completed");
+
+      const response = {
+        success: true,
+        message: "Live Recording Analysis Completed!",
+        analysis: {
+          transcription: transcription.text,
+          mainProblem: analysis.mainProblem,
+          problemType: analysis.problemType,
+          specificIssues: analysis.specificIssues,
+          severity: analysis.severity,
+          keywords: analysis.keywords,
+          recommendation: analysis.recommendation,
+          word_count: transcription.text.split(/\s+/).length,
+          problem_count: analysis.specificIssues.length,
+          aiModel: "gemini-2.0-flash",
+          keywordSearch: {
+            foundKeywords: keywordResults.foundKeywords,
+            categories: keywordResults.categories,
+            totalKeywordsFound: keywordResults.totalMatches,
+            keywordMatch: keywordResults.totalMatches > 0,
+            totalMatches: keywordResults.totalMatches
+          }
+        },
+      };
+
+      // Clean up merged file after processing
+      try {
+        fs.unlinkSync(filePath);
+        console.log("Cleaned up merged file:", filePath);
+      } catch (cleanupError) {
+        console.error("File cleanup error:", cleanupError.message);
+      }
+
+      res.json(response);
+    } catch (processingError) {
+      // Clean up merged file on error
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (cleanupError) {
+        console.error("File cleanup error:", cleanupError.message);
+      }
+      throw processingError;
+    }
+
+  } catch (error) {
+    console.error("Server error:", error);
+    res.status(500).json({ 
+      error: "Server error",
+      message: error.message 
+    });
+  }
+});
+
+// Keep the original endpoint for backward compatibility
+app.post("/process-recording-legacy", upload.single("recording"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No recording received" });
@@ -186,7 +447,6 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
 
     console.log("Processing recording... File size:", req.file.size);
 
-    // For Vercel, use /tmp directory
     const tempDir = '/tmp';
     const tempFilePath = path.join(tempDir, `audio-${Date.now()}.webm`);
     fs.writeFileSync(tempFilePath, req.file.buffer);
@@ -258,13 +518,23 @@ app.post("/process-recording", upload.single("recording"), async (req, res) => {
 
 // Health check endpoint
 app.get("/", (req, res) => {
+  // Run cleanup on health check
+  cleanupOldChunks();
+  
   res.json({
-    message: "Vehicle Problem Detector - Live Recording Only",
-    status: "Ready for live video recording analysis",
-    features: ["Live recording", "Keyword search", "AI analysis"],
+    message: "Vehicle Problem Detector - Chunked Upload Enabled",
+    status: "Ready for large video uploads",
+    features: ["Chunked upload", "Live recording", "Keyword search", "AI analysis"],
     totalKeywords: vehicleKeywords.length,
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    chunkUpload: true
   });
+});
+
+// Cleanup endpoint (optional, for manual cleanup)
+app.post("/cleanup", (req, res) => {
+  cleanupOldChunks();
+  res.json({ success: true, message: "Cleanup completed" });
 });
 
 // For Vercel serverless compatibility
@@ -277,5 +547,6 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
     console.log(`Vehicle Problem Detector running on port ${PORT}`);
     console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Chunk upload directory: ${CHUNKS_DIR}`);
   });
 }
