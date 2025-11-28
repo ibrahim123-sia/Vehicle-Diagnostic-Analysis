@@ -294,9 +294,7 @@ const VideoProblemDetector = () => {
           <p className="text-gray-600">
             Record vehicle issues for AI-powered diagnostic analysis
           </p>
-          <div className="mt-2 text-sm text-orange-600 bg-orange-50 p-2 rounded-lg inline-block">
-            ⚡ Optimized for smaller file sizes (max 90 seconds)
-          </div>
+          
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
