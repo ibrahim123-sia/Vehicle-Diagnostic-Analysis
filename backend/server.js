@@ -4,20 +4,23 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 const { AssemblyAI } = require("assemblyai");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-
+const Groq = require("groq-sdk");
+const dotenv = require("dotenv");
+dotenv.config();
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
+// Use environment variables directly (no fallbacks)
 const assemblyClient = new AssemblyAI({
-  apiKey: process.env.ASSEMBLYAI_API_KEY || "c365a3cefbee47d2a8f1ea25ed797d35",
+  apiKey: process.env.ASSEMBLYAI_API_KEY,
 });
 
-const genAI = new GoogleGenerativeAI(
-  process.env.GEMINI_API_KEY
-);
+// Initialize Groq with environment variable
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY
+});
 
 // Configure multer for chunk uploads
 const storage = multer.memoryStorage();
@@ -98,7 +101,7 @@ function advancedKeywordSearch(text) {
   };
 }
 
-function parseGeminiResponse(responseText) {
+function parseGroqResponse(responseText) {
   try {
     let cleanText = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     
@@ -117,12 +120,8 @@ function parseGeminiResponse(responseText) {
   }
 }
 
-async function analyzeWithGemini(text) {
+async function analyzeWithGroq(text) {
   try {
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
-    });
-
     const prompt = `
 Analyze this vehicle problem description and return ONLY valid JSON without any markdown formatting:
 
@@ -141,22 +140,41 @@ Return JSON with this exact structure:
 Focus on vehicle mechanical issues. Return ONLY the JSON object without any additional text or markdown.
 `;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const responseText = response.text();
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert automotive technician. Analyze vehicle problem descriptions and provide structured JSON responses with diagnosis and recommendations."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+       model: "llama-3.3-70b-versatile", 
+  temperature: 0.1,
+      max_tokens: 1024,
+      response_format: { type: "json_object" }
+    });
 
-    const analysis = parseGeminiResponse(responseText);
+    const responseText = chatCompletion.choices[0]?.message?.content || "";
+    
+    if (!responseText) {
+      throw new Error("Empty response from Groq API");
+    }
+
+    const analysis = parseGroqResponse(responseText);
 
     return {
       success: true,
       ...analysis,
     };
   } catch (error) {
+    console.error("Groq API error:", error.message);
     throw new Error(`AI analysis failed: ${error.message}`);
   }
 }
 
-// Add transcribeAudio function
 async function transcribeAudio(audioPath) {
   try {
     const audioUrl = await assemblyClient.files.upload(audioPath);
@@ -175,7 +193,6 @@ async function transcribeAudio(audioPath) {
   }
 }
 
-// Clean up old chunks (older than 1 hour)
 function cleanupOldChunks() {
   try {
     const files = fs.readdirSync(CHUNKS_DIR);
@@ -197,7 +214,6 @@ function cleanupOldChunks() {
   }
 }
 
-// Upload chunk endpoint
 app.post("/upload-chunk", upload.single("chunk"), async (req, res) => {
   try {
     const { chunkIndex, totalChunks, uploadId, fileName, fileType, fileSize } = req.body;
@@ -218,7 +234,6 @@ app.post("/upload-chunk", upload.single("chunk"), async (req, res) => {
 
     console.log(`Received chunk ${chunkIndex}/${totalChunks} for upload ${uploadId}`);
 
-    // Save chunk to temporary file
     const chunkFileName = `chunk_${uploadId}_${chunkIndex}.tmp`;
     const chunkPath = path.join(CHUNKS_DIR, chunkFileName);
     
@@ -242,7 +257,6 @@ app.post("/upload-chunk", upload.single("chunk"), async (req, res) => {
   }
 });
 
-// Merge chunks endpoint
 app.post("/merge-chunks", async (req, res) => {
   try {
     const { uploadId, fileName, totalChunks, fileType, fileSize } = req.body;
@@ -256,7 +270,6 @@ app.post("/merge-chunks", async (req, res) => {
 
     console.log(`Merging ${totalChunks} chunks for upload ${uploadId}`);
 
-    // Check if all chunks exist
     const chunks = [];
     for (let i = 0; i < totalChunks; i++) {
       const chunkPath = path.join(CHUNKS_DIR, `chunk_${uploadId}_${i}.tmp`);
@@ -269,7 +282,6 @@ app.post("/merge-chunks", async (req, res) => {
       chunks.push(chunkPath);
     }
 
-    // Create merged file
     const mergedFileName = `merged_${uploadId}_${fileName}`;
     const mergedFilePath = path.join(CHUNKS_DIR, mergedFileName);
     
@@ -278,8 +290,6 @@ app.post("/merge-chunks", async (req, res) => {
     for (let i = 0; i < chunks.length; i++) {
       const chunkData = fs.readFileSync(chunks[i]);
       writeStream.write(chunkData);
-      
-      // Delete chunk file after merging
       fs.unlinkSync(chunks[i]);
     }
     
@@ -311,7 +321,6 @@ app.post("/merge-chunks", async (req, res) => {
   }
 });
 
-// Cancel upload endpoint
 app.post("/cancel-upload", async (req, res) => {
   try {
     const { uploadId } = req.body;
@@ -325,7 +334,6 @@ app.post("/cancel-upload", async (req, res) => {
 
     console.log(`Cancelling upload: ${uploadId}`);
 
-    // Delete all chunks for this upload
     const files = fs.readdirSync(CHUNKS_DIR);
     files.forEach(file => {
       if (file.includes(uploadId)) {
@@ -350,7 +358,6 @@ app.post("/cancel-upload", async (req, res) => {
   }
 });
 
-// Updated main processing endpoint to work with file path
 app.post("/process-recording", async (req, res) => {
   try {
     const { filePath, fileName, fileSize, fileType } = req.body;
@@ -365,7 +372,6 @@ app.post("/process-recording", async (req, res) => {
     console.log("File size:", fileSize);
 
     try {
-      // Step 1: Transcribe with AssemblyAI
       console.log("Starting transcription...");
       const transcription = await transcribeAudio(filePath);
 
@@ -375,13 +381,11 @@ app.post("/process-recording", async (req, res) => {
 
       console.log("Transcription successful, length:", transcription.text.length);
 
-      // Step 2: Search for keywords
       const keywordResults = advancedKeywordSearch(transcription.text);
       console.log("Keyword search found:", keywordResults.totalMatches, "matches");
 
-      // Step 3: Analyze with Gemini
       console.log("Starting AI analysis...");
-      const analysis = await analyzeWithGemini(transcription.text);
+      const analysis = await analyzeWithGroq(transcription.text);
       console.log("AI analysis completed");
 
       const response = {
@@ -397,7 +401,7 @@ app.post("/process-recording", async (req, res) => {
           recommendation: analysis.recommendation,
           word_count: transcription.text.split(/\s+/).length,
           problem_count: analysis.specificIssues.length,
-          aiModel: "gemini-2.0-flash",
+          aiModel: "mixtral-8x7b-32768",
           keywordSearch: {
             foundKeywords: keywordResults.foundKeywords,
             categories: keywordResults.categories,
@@ -408,7 +412,6 @@ app.post("/process-recording", async (req, res) => {
         },
       };
 
-      // Clean up merged file after processing
       try {
         fs.unlinkSync(filePath);
         console.log("Cleaned up merged file:", filePath);
@@ -418,7 +421,6 @@ app.post("/process-recording", async (req, res) => {
 
       res.json(response);
     } catch (processingError) {
-      // Clean up merged file on error
       try {
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
@@ -438,7 +440,6 @@ app.post("/process-recording", async (req, res) => {
   }
 });
 
-// Keep the original endpoint for backward compatibility
 app.post("/process-recording-legacy", upload.single("recording"), async (req, res) => {
   try {
     if (!req.file) {
@@ -452,7 +453,6 @@ app.post("/process-recording-legacy", upload.single("recording"), async (req, re
     fs.writeFileSync(tempFilePath, req.file.buffer);
 
     try {
-      // Step 1: Transcribe with AssemblyAI
       console.log("Starting transcription...");
       const transcription = await transcribeAudio(tempFilePath);
 
@@ -462,13 +462,11 @@ app.post("/process-recording-legacy", upload.single("recording"), async (req, re
 
       console.log("Transcription successful, length:", transcription.text.length);
 
-      // Step 2: Search for keywords
       const keywordResults = advancedKeywordSearch(transcription.text);
       console.log("Keyword search found:", keywordResults.totalMatches, "matches");
 
-      // Step 3: Analyze with Gemini
       console.log("Starting AI analysis...");
-      const analysis = await analyzeWithGemini(transcription.text);
+      const analysis = await analyzeWithGroq(transcription.text);
       console.log("AI analysis completed");
 
       const response = {
@@ -484,7 +482,7 @@ app.post("/process-recording-legacy", upload.single("recording"), async (req, re
           recommendation: analysis.recommendation,
           word_count: transcription.text.split(/\s+/).length,
           problem_count: analysis.specificIssues.length,
-          aiModel: "gemini-2.0-flash",
+          aiModel: "mixtral-8x7b-32768",
           keywordSearch: {
             foundKeywords: keywordResults.foundKeywords,
             categories: keywordResults.categories,
@@ -497,7 +495,6 @@ app.post("/process-recording-legacy", upload.single("recording"), async (req, re
 
       res.json(response);
     } finally {
-      // Clean up temporary file
       try {
         if (fs.existsSync(tempFilePath)) {
           fs.unlinkSync(tempFilePath);
@@ -516,31 +513,30 @@ app.post("/process-recording-legacy", upload.single("recording"), async (req, re
   }
 });
 
-// Health check endpoint
 app.get("/", (req, res) => {
-  // Run cleanup on health check
   cleanupOldChunks();
   
   res.json({
     message: "Vehicle Problem Detector - Chunked Upload Enabled",
     status: "Ready for large video uploads",
-    features: ["Chunked upload", "Live recording", "Keyword search", "AI analysis"],
+    features: ["Chunked upload", "Live recording", "Keyword search", "AI analysis (Groq)"],
     totalKeywords: vehicleKeywords.length,
     environment: process.env.NODE_ENV || 'development',
-    chunkUpload: true
+    chunkUpload: true,
+    apiKeysConfigured: {
+      assemblyAI: !!process.env.ASSEMBLYAI_API_KEY,
+      groq: !!process.env.GROQ_API_KEY
+    }
   });
 });
 
-// Cleanup endpoint (optional, for manual cleanup)
 app.post("/cleanup", (req, res) => {
   cleanupOldChunks();
   res.json({ success: true, message: "Cleanup completed" });
 });
 
-// For Vercel serverless compatibility
 module.exports = app;
 
-// Only start server if not in Vercel environment
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
@@ -548,5 +544,7 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
     console.log(`Total keywords loaded: ${vehicleKeywords.length}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`Chunk upload directory: ${CHUNKS_DIR}`);
+    console.log(`AI Provider: Groq`);
+    console.log(`AI Model: mixtral-8x7b-32768`);
   });
 }
